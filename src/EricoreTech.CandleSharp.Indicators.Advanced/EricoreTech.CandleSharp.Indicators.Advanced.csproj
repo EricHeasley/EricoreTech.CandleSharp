@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EricoreTech.CandleSharp.Advanced</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../EricoreTech.CandleSharp.Domain/EricoreTech.CandleSharp.Domain.csproj" Private="false" />
+    <ProjectReference Include="..\EricoreTech.CandleSharp.Indicators.Standard\EricoreTech.CandleSharp.Indicators.Standard.csproj" />
+  </ItemGroup>
+
+  <!-- Indicator packs are plugins: drop the built DLL into the repo-root
+       plugins directory so hosts pick it up at startup. -->
+  <Target Name="CopyToPluginsDir" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)/../../plugins" />
+  </Target>
+
+</Project>
