@@ -1,0 +1,19 @@
+# Local stock data
+data/
+
+# .NET build output
+bin/
+obj/
+*.user
+
+# Python leftovers
+__pycache__/
+
+# Indicator pack DLLs copied at build time
+plugins/*.dll
+/.vs/StockTradee
+/.vs/EricoreTech.CandleSharp/FileContentIndex
+/.vs/EricoreTech.CandleSharp/v18
+/src/EricoreTech.CandleSharp.Web/Properties
+/src/StockTradee.Web/Properties
+/.vs
