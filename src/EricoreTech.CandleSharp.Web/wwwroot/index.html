@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CandleSharp</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='6' width='3' height='7' fill='%232a78d6'/%3E%3Crect x='7' y='3' width='3' height='10' fill='%230ca30c'/%3E%3Crect x='12' y='8' width='3' height='5' fill='%23eb6834'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>CandleSharp</h1>
+  <span class="tagline">by EricoreTech &middot; free stock data &middot; local storage &middot; pluggable indicators</span>
+</header>
+
+<main>
+  <!-- One filter row above everything it scopes -->
+  <section class="filters" aria-label="Data selection">
+    <label class="field">
+      <span>Dataset</span>
+      <select id="dataset-select"></select>
+    </label>
+    <div class="range-presets" id="range-presets" role="group" aria-label="Date range">
+      <button data-range="63" type="button">3M</button>
+      <button data-range="126" type="button">6M</button>
+      <button data-range="252" class="selected" type="button">1Y</button>
+      <button data-range="all" type="button">All</button>
+    </div>
+    <form id="fetch-form" class="fetch-form">
+      <label class="field">
+        <span>Add ticker</span>
+        <input id="fetch-ticker" placeholder="e.g. AAPL" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Period</span>
+        <select id="fetch-period">
+          <option>6mo</option>
+          <option selected>1y</option>
+          <option>2y</option>
+          <option>5y</option>
+          <option>max</option>
+        </select>
+      </label>
+      <button type="submit" id="fetch-btn">Fetch</button>
+    </form>
+    <a id="report-link" class="report-link" target="_blank" rel="noopener" title="Open the printable research report for the selected ticker">Report</a>
+    <button type="button" id="refresh-btn"
+      title="Re-fetch the latest bars and dividends for every saved dataset; weekly/monthly series are re-derived">⟳ Refresh all</button>
+    <span id="status" class="status" role="status"></span>
+  </section>
+
+  <section class="card" id="screener-card" hidden>
+    <div class="card-head">
+      <h2>Screener</h2>
+      <span class="tagline">every saved dataset ranked by consensus — click a row to open it</span>
+    </div>
+    <div class="table-scroll">
+      <table id="screener-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="verdict-card" hidden>
+    <div class="card-head"><h2>Bottom line</h2></div>
+    <p class="verdict-headline" id="verdict-headline"></p>
+    <ul class="verdict-details" id="verdict-details"></ul>
+  </section>
+
+  <section class="card" id="price-card" hidden>
+    <div class="card-head">
+      <h2 id="price-title"></h2>
+      <div class="legend" id="overlay-legend" aria-label="Overlays"></div>
+    </div>
+    <div class="chart-wrap">
+      <svg id="price-chart" role="img" aria-label="Price chart"></svg>
+      <div id="tooltip" class="tooltip" hidden></div>
+    </div>
+  </section>
+
+  <section class="card" id="rsi-card" hidden>
+    <div class="card-head"><h2>RSI 14</h2></div>
+    <div class="chart-wrap">
+      <svg id="rsi-chart" role="img" aria-label="RSI chart"></svg>
+    </div>
+  </section>
+
+  <section class="card" id="dividends-card" hidden>
+    <div class="card-head"><h2>Dividends</h2></div>
+    <p class="dividend-headline" id="dividend-headline"></p>
+    <p class="dividend-growth" id="dividend-growth"></p>
+    <div class="dividend-annuals" id="dividend-annuals"></div>
+    <details>
+      <summary>Recent payments</summary>
+      <div class="table-scroll">
+        <table id="dividend-table">
+          <thead><tr><th>Date</th><th>Amount</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="card" id="simulator-card" hidden>
+    <div class="card-head">
+      <h2>Buy &amp; hold simulator</h2>
+      <span class="tagline">invest at the start date, hold, collect dividends — uses daily data</span>
+    </div>
+    <form id="simulator-form" class="simulator-form">
+      <label class="field">
+        <span>Amount ($)</span>
+        <input id="sim-amount" type="number" min="1" step="any" value="10000">
+      </label>
+      <label class="field">
+        <span>Start (blank = 1y ago)</span>
+        <input id="sim-start" type="date">
+      </label>
+      <label class="field">
+        <span>End (blank = latest)</span>
+        <input id="sim-end" type="date">
+      </label>
+      <button type="submit" id="sim-btn">Simulate</button>
+    </form>
+    <p class="sim-headline" id="sim-headline" hidden></p>
+    <ul class="verdict-details" id="sim-details" hidden></ul>
+  </section>
+
+  <section class="card" id="social-card" hidden>
+    <div class="card-head">
+      <h2>Social buzz</h2>
+      <span class="tagline">what the crowd on StockTwits is saying</span>
+      <button type="button" id="social-btn" class="social-pull">Pull latest chatter</button>
+    </div>
+    <p class="social-headline" id="social-headline"></p>
+    <div id="social-posts" class="social-posts"></div>
+  </section>
+
+  <section class="card" id="analysts-card" hidden>
+    <div class="card-head"><h2>Analysts</h2></div>
+    <div id="analysts" class="analysts"></div>
+  </section>
+
+  <section class="card" id="signals-card" hidden>
+    <div class="card-head"><h2>Signals</h2></div>
+    <div id="stances" class="stances" aria-label="Current stance per indicator"></div>
+    <h3>Recent triggers</h3>
+    <div class="table-scroll">
+      <table id="trigger-table">
+        <thead><tr><th>Date</th><th>Indicator</th><th>Direction</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="table-card" hidden>
+    <details>
+      <summary>Data table (last 15 bars)</summary>
+      <div class="table-scroll">
+        <table id="bars-table">
+          <thead><tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="card empty-state" id="empty-state">
+    <p>No local data yet. Fetch a ticker above, or from the command line:</p>
+    <pre>dotnet run --project src/EricoreTech.CandleSharp.Cli -- fetch AAPL --period 1y</pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

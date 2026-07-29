@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EricoreTech.CandleSharp.Web</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../EricoreTech.CandleSharp.Application/EricoreTech.CandleSharp.Application.csproj" />
+    <ProjectReference Include="../EricoreTech.CandleSharp.Infrastructure/EricoreTech.CandleSharp.Infrastructure.csproj" />
+    <!-- Build-order only (no assembly reference): running the web app builds the
+         indicator packs, whose DLLs land in the repo-root plugins directory. -->
+    <ProjectReference Include="../EricoreTech.CandleSharp.Indicators.Standard/EricoreTech.CandleSharp.Indicators.Standard.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../EricoreTech.CandleSharp.Indicators.Advanced/EricoreTech.CandleSharp.Indicators.Advanced.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../EricoreTech.CandleSharp.Indicators.Patterns/EricoreTech.CandleSharp.Indicators.Patterns.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../EricoreTech.CandleSharp.Agents/EricoreTech.CandleSharp.Agents.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Ship the indicator pack DLLs next to the binary (in a plugins subfolder)
+       so the app finds its indicators no matter what directory it is launched
+       from. The registry checks this app-local folder as a fallback. -->
+  <Target Name="CopyPluginDllsToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <PluginDlls Include="$(MSBuildProjectDirectory)/../../plugins/*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PluginDlls)" DestinationFolder="$(OutDir)plugins" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

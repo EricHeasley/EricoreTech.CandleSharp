@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EricoreTech.CandleSharp.Patterns</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../EricoreTech.CandleSharp.Domain/EricoreTech.CandleSharp.Domain.csproj" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyToPluginsDir" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)/../../plugins" />
+  </Target>
+
+</Project>

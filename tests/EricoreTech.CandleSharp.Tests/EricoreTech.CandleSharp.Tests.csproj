@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Domain/EricoreTech.CandleSharp.Domain.csproj" />
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Application/EricoreTech.CandleSharp.Application.csproj" />
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Infrastructure/EricoreTech.CandleSharp.Infrastructure.csproj" />
+    <!-- Referenced for direct class access AND so every plugin DLL lands in
+         the test output dir for the PluginLoader/registry tests. -->
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Indicators.Standard/EricoreTech.CandleSharp.Indicators.Standard.csproj" />
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Indicators.Advanced/EricoreTech.CandleSharp.Indicators.Advanced.csproj" />
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Indicators.Patterns/EricoreTech.CandleSharp.Indicators.Patterns.csproj" />
+    <ProjectReference Include="../../src/EricoreTech.CandleSharp.Agents/EricoreTech.CandleSharp.Agents.csproj" />
+  </ItemGroup>
+
+</Project>
