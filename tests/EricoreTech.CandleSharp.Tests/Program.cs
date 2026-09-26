@@ -674,6 +674,92 @@ Check(patternReport.ActiveNow.Count == 0 || patternReport.ActiveNow.All(p => p.A
 Check(Throws(() => new PatternOptions(Horizon: 0).Validate()), "horizon 0 should be rejected");
 Check(Throws(() => new PatternOptions(TestFraction: 1).Validate()), "test fraction 1 should be rejected");
 
+// --- Rules: condition parsing and evaluation on scripted data ---
+Check(RuleCondition.Parse("RSI_14<30").Text == "RSI_14 < 30", "condition text not normalized");
+Check(RuleCondition.Parse("macd_12_26_9 turns bullish").IsStanceCondition, "stance condition not recognized");
+Check(ThrowsFormat(() => RuleCondition.Parse("RSI_14 banana")), "nonsense condition should be rejected");
+Check(ThrowsFormat(() => RuleCondition.Parse("30 > RSI_14")), "number on the left should be rejected");
+Check(ThrowsFormat(() => RuleCondition.Parse("RSI_14 turns Neutral")), "\"turns Neutral\" should be rejected");
+
+// Closes 10, 11, 12, 11, 10, 11; LINE flat at 10.5; stance flips to Bullish at bar 3.
+var ruleCandles = new[] { 10.0, 11, 12, 11, 10, 11 }
+    .Select((c, i) => new Candle(new DateTime(2024, 1, 1).AddDays(i), c, c, c, c, 100)).ToList();
+var ruleSignals = new EngineResult(
+    [("LINE", Enumerable.Repeat<double?>(10.5, 6).ToArray()), ("WARM", [null, null, 1, 2, 3, 4])],
+    [],
+    new Dictionary<string, SignalDirection[]>
+    {
+        ["TREND"] = [SignalDirection.Neutral, SignalDirection.Neutral, SignalDirection.Neutral,
+            SignalDirection.Bullish, SignalDirection.Bullish, SignalDirection.Bearish],
+    });
+var ruleData = new RuleData(ruleCandles, ruleSignals);
+string Bits(string condition) =>
+    string.Concat(RuleCondition.Parse(condition).Evaluate(ruleData).Select(b => b ? '1' : '0'));
+Check(Bits("Close > LINE") == "011101", $"Close > LINE gave {Bits("Close > LINE")}");
+Check(Bits("close crosses above line") == "010001", $"crosses above gave {Bits("close crosses above line")}");
+Check(Bits("Close crosses below LINE") == "000010", $"crosses below gave {Bits("Close crosses below LINE")}");
+Check(Bits("TREND is Bullish") == "000110", $"is Bullish gave {Bits("TREND is Bullish")}");
+Check(Bits("TREND turns Bullish") == "000100", $"turns Bullish gave {Bits("TREND turns Bullish")}");
+Check(Bits("WARM >= 0") == "001111", "warm-up bars must be false");
+Check(Bits("LINE vs close > 0%") == "100010", $"vs close gave {Bits("LINE vs close > 0%")}");
+Check(Bits("LINE vs close < -8%") == "001000", $"percent literal gave {Bits("LINE vs close < -8%")}");
+
+// --- RuleEvaluator: signals are run starts, scored in the rule's direction ---
+// On the planted swing series, buying at each swing bottom gains the full +10.5% swing.
+var swingCandles = plantedCloses.Select((c, i) => new Candle(new DateTime(2020, 1, 1).AddDays(i), c, c, c, c, 100)).ToList();
+var swingData = new RuleData(swingCandles, new EngineResult([], [],
+    new Dictionary<string, SignalDirection[]> { ["CYCLE"] = cycle }));
+var buyRule = new TradeRule("t1", "bottoms", "PLNT", RuleAction.Buy, ["CYCLE is Bullish"], 10);
+var buyResult = RuleEvaluator.Evaluate(buyRule, "PLNT", swingData);
+Check(buyResult.Signals.Count == 30, $"expected 30 signals, got {buyResult.Signals.Count}");
+Check(buyResult.HitRate == 1 && buyResult.Edge > 0.05, $"buy-at-bottom hit {buyResult.HitRate}, edge {buyResult.Edge}");
+var sellResult = RuleEvaluator.Evaluate(buyRule with { Action = RuleAction.Sell }, "PLNT", swingData);
+Check(sellResult.HitRate == 0 && sellResult.Edge < 0, "a Sell at swing bottoms should score as wrong");
+var stayRule = buyRule with { Conditions = ["Close > 0"] };
+var stayResult = RuleEvaluator.Evaluate(stayRule, "PLNT", swingData);
+Check(stayResult.Signals.Count == 1 && stayResult.FiringNow && !stayResult.NewSignal,
+    "a condition that stays true should be one signal, firing now but not new");
+Check(stayResult.ActiveBars == plantedBars, "active bars should count every true bar");
+
+// --- RuleService + JsonRuleStore: validation against real data, persistence, scoping ---
+var ruleDir = Path.Combine(Path.GetTempPath(), $"candlesharp-rules-{Guid.NewGuid():N}");
+try
+{
+    var ruleRepo = new CsvCandleRepository(ruleDir);
+    ruleRepo.Save(candles, "RUL", "1d");
+    var ruleEngineCatalog = new FixedCatalog([new RsiIndicator(), new IchimokuIndicator()]);
+    var ruleService = new RuleService(ruleRepo, new JsonRuleStore(ruleDir), ruleEngineCatalog);
+
+    var saved = ruleService.Add(null, "rul", RuleAction.Buy, ["RSI_14<40", "ICHIMOKU is Bullish"]);
+    Check(saved.Ticker == "RUL" && saved.Name == "RSI_14 < 40 and ICHIMOKU is Bullish", $"saved rule {saved}");
+    Check(ThrowsOf<ArgumentException>(() => ruleService.Add(null, "RUL", RuleAction.Buy, ["RSI_99 < 40"])),
+        "unknown indicator should be rejected");
+    Check(ThrowsOf<ArgumentException>(() => ruleService.Add(null, "RUL", RuleAction.Buy, ["CHIKOU > 1"])),
+        "future-peeking indicator should be rejected");
+    ruleService.Add("everyone", "*", RuleAction.Sell, ["RSI_14 > 70"]);
+    Check(new JsonRuleStore(ruleDir).LoadRules().Count == 2, "rules not persisted");
+    Check(File.ReadAllText(Path.Combine(ruleDir, "rules.json")).Contains("RSI_14 < 40"), "rules.json should stay readable");
+
+    var evaluated = ruleService.Evaluate("RUL", "1d");
+    Check(evaluated.Count == 2 && evaluated.All(r => r.Error is null), "both rules should evaluate for RUL");
+    Check(!saved.AppliesTo("MSFT") && saved.AppliesTo("rul") && new TradeRule("x", "x", "*", RuleAction.Buy, ["Close > 0"]).AppliesTo("MSFT"),
+        "rule ticker scoping wrong");
+    Check(!ruleService.Operands("RUL", "1d").Values.Contains("CHIKOU"), "operands should hide future-peeking columns");
+    Check(ruleService.Remove(saved.Id) && !ruleService.Remove(saved.Id), "remove should delete exactly once");
+    Check(ruleService.List().Count == 1, "one rule should remain");
+}
+finally
+{
+    if (Directory.Exists(ruleDir)) Directory.Delete(ruleDir, recursive: true);
+}
+
+// --- Patterns carry rule conditions that reproduce them ---
+var cycleBull = patternReport.BullishEdges.First(p => p.Label == "CYCLE is Bullish");
+Check(cycleBull.RuleConditions is ["CYCLE is Bullish"], "stance pattern should carry its rule condition");
+var phaseBucket = patternReport.ColumnStudies.First(c => c.Column == "PHASE").Buckets[0];
+Check(phaseBucket.RuleConditions is [var only] && only.StartsWith("PHASE < "),
+    $"bottom bucket rule: {string.Join(" & ", phaseBucket.RuleConditions ?? [])}");
+
 if (failures == 0)
 {
     Console.WriteLine("All tests passed.");
@@ -687,6 +773,18 @@ void Check(bool condition, string message)
     if (condition) return;
     failures++;
     Console.Error.WriteLine($"FAIL: {message}");
+}
+
+static bool ThrowsFormat(Action action)
+{
+    try { action(); return false; }
+    catch (FormatException) { return true; }
+}
+
+static bool ThrowsOf<TException>(Action action) where TException : Exception
+{
+    try { action(); return false; }
+    catch (TException) { return true; }
 }
 
 static bool Throws(Action action)

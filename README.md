@@ -355,6 +355,54 @@ patterns" card (`GET /api/patterns?tickers=AAPL,MSFT&horizon=10`, where
 omitting `tickers` pools every saved dataset). These are historical
 statistics, not a trading system; use `backtest` to judge the agents.
 
+## Buy/sell rules
+
+Write your own rule for a stock, such as "when RSI is under 30 **and** price is
+above the 50-day average, it's a buy". The app then tells you whether it's firing
+right now and how it did every time it fired in the past.
+
+**Dashboard:** the "My buy/sell rules" card (right under Bottom line). Click
+**＋ New rule**, pick BUY or SELL, choose this stock or every stock, and add
+conditions with the dropdowns. Or run Indicator patterns and click **Use as
+rule** on any row to pre-fill the builder. A rule that holds on the latest
+bar gets a green **▲ BUY NOW** (or red **▼ SELL NOW**) badge and moves to
+the top. Each rule shows how often it fired, how often it was right, the
+average move, and its edge over a typical stretch. Expand "Past signals" to see
+each one.
+
+**CLI:**
+
+```bash
+candlesharp rule add AAPL buy "RSI_14 < 30" "Close > SMA_50" --name "Dip in uptrend"
+candlesharp rule add '*' sell "RSI_14 > 70" "MACD_12_26_9 turns Bearish"   # every stock
+candlesharp rules            # every rule on every saved stock, firing ones first
+candlesharp rules AAPL
+candlesharp rule fields AAPL # what you can put in a condition
+candlesharp rule remove <ID>
+```
+
+Condition syntax (case-insensitive; all conditions must hold):
+
+| Condition | True when |
+|---|---|
+| `RSI_14 < 30` | a value compared with a number (`<` `<=` `>` `>=`) |
+| `Close > SMA_50` | ...or with another value |
+| `Close crosses above SMA_50` | only on the bar it crosses (also `crosses below`) |
+| `SMA_50 vs close < -5%` | a price level as a distance from the close |
+| `MACD_12_26_9 is Bullish` | an indicator's stance (`Bullish`, `Bearish`, `Neutral`) |
+| `MACD_12_26_9 turns Bullish` | only on the bar the stance flips |
+
+Values are `Open`, `High`, `Low`, `Close`, `Volume`, or any indicator column.
+Rules are checked against real data when saved, so typos and indicators that
+use future bars (such as `CHIKOU`) are rejected. A signal is the first bar
+of each run where the rule holds, so a rule that stays true for a week counts
+once. Signals are scored over the rule's horizon (default 10 bars). Rules live in
+`data/rules.json`, which you can also edit by hand. The API is `GET /api/rules/{ticker}`,
+`GET /api/rules/{ticker}/operands`, `POST /api/rules`, `DELETE /api/rules/{id}`.
+
+A good track record over past data is not a promise. Few signals (under about 10)
+mean little. Not financial advice.
+
 ## The indicator layers
 
 1. **Math** (`Core/Indicators.cs`, `Core/IndicatorsAdvanced.cs`) — pure

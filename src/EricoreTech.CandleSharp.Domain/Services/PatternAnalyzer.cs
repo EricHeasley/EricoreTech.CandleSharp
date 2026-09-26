@@ -125,8 +125,12 @@ namespace EricoreTech.CandleSharp.Domain
         private sealed record Context(
             List<Sample> Samples, PatternOptions Options, BaselineStat Baseline, BaselineStat OosBaseline);
 
-        /// <summary>A named condition: one bar mask per sample. Source is the indicator it came from.</summary>
-        private sealed record Condition(string Label, string Kind, string Source, bool[][] Masks);
+        /// <summary>
+        /// A named condition: one bar mask per sample. Source is the indicator it came
+        /// from; Rule is the equivalent rule-condition text (null if not expressible).
+        /// </summary>
+        private sealed record Condition(
+            string Label, string Kind, string Source, bool[][] Masks, IReadOnlyList<string>? Rule);
 
         private static BaselineStat Baseline(List<Sample> samples, Func<Sample, (int From, int To)> range)
         {
@@ -152,7 +156,7 @@ namespace EricoreTech.CandleSharp.Domain
                         ? stance.Select(d => d == direction).ToArray()
                         : new bool[s.Table.Count]).ToArray();
                     if (masks.Any(m => m.Any(b => b)))
-                        conditions.Add(new Condition($"{name} is {direction}", "stance", name, masks));
+                        conditions.Add(new Condition($"{name} is {direction}", "stance", name, masks, [$"{name} is {direction}"]));
                 }
             return conditions;
         }
@@ -173,7 +177,7 @@ namespace EricoreTech.CandleSharp.Domain
                         return mask;
                     }).ToArray();
                     if (masks.Any(m => m.Any(b => b)))
-                        conditions.Add(new Condition($"{name} turns {direction}", "trigger", name, masks));
+                        conditions.Add(new Condition($"{name} turns {direction}", "trigger", name, masks, [$"{name} turns {direction}"]));
                 }
             return conditions;
         }
@@ -197,7 +201,8 @@ namespace EricoreTech.CandleSharp.Domain
                         for (int i = 0; i < masks[s].Length; i++)
                             masks[s][i] = x.Masks[s][i] && y.Masks[s][i];
                     }
-                    yield return new Condition($"{x.Label} + {y.Label}", "combo", $"{x.Source}+{y.Source}", masks);
+                    yield return new Condition($"{x.Label} + {y.Label}", "combo", $"{x.Source}+{y.Source}", masks,
+                        [.. x.Rule!, .. y.Rule!]);
                 }
         }
 
@@ -236,9 +241,13 @@ namespace EricoreTech.CandleSharp.Domain
                     }).ToArray();
 
                     var label = $"{display} in {BucketName(b, bucketCount)}";
+                    IReadOnlyList<string>? rule = null;
                     if (samples.Count == 1 && cutoffs[0] is { } only)
+                    {
                         label += $" ({BucketRange(b, only, relative)})";
-                    buckets.Add(Evaluate(ctx, new Condition(label, "bucket", name, masks)));
+                        rule = BucketRule(b, only, relative ? $"{name} vs close" : name, relative);
+                    }
+                    buckets.Add(Evaluate(ctx, new Condition(label, "bucket", name, masks, rule)));
                 }
 
                 yield return new ColumnStudy(
@@ -308,6 +317,19 @@ namespace EricoreTech.CandleSharp.Domain
                 : $"{Fmt(cutoffs[b - 1])} to {Fmt(cutoffs[b])}";
         }
 
+        /// <summary>The bucket as rule conditions: bucket b holds cutoffs[b-1] &lt;= v &lt; cutoffs[b].</summary>
+        private static IReadOnlyList<string> BucketRule(int b, double[] cutoffs, string operand, bool relative)
+        {
+            // Rounded like the label, so the rule reads the same as the pattern it came from.
+            string Num(double v) => relative
+                ? (v * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%"
+                : v.ToString("G4", CultureInfo.InvariantCulture);
+            var rule = new List<string>();
+            if (b > 0) rule.Add($"{operand} >= {Num(cutoffs[b - 1])}");
+            if (b < cutoffs.Length) rule.Add($"{operand} < {Num(cutoffs[b])}");
+            return rule;
+        }
+
         private static PatternStat Evaluate(Context ctx, Condition condition)
         {
             var o = ctx.Options;
@@ -362,7 +384,7 @@ namespace EricoreTech.CandleSharp.Domain
 
             return new PatternStat(
                 condition.Label, condition.Kind, train.Count, avg, win, edge, t,
-                test.Count, oosAvg, oosWin, oosEdge, holds, activeIn);
+                test.Count, oosAvg, oosWin, oosEdge, holds, activeIn, condition.Rule);
         }
 
         /// <summary>Spearman rank correlation per ticker, averaged weighted by sample count.</summary>
