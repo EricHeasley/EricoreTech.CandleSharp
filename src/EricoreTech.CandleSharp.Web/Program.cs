@@ -47,7 +47,12 @@ if (catalog.Indicators.Count == 0)
         string.Join(", ", catalog.ScannedDirectories.Select(Path.GetFullPath)));
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Revalidate the dashboard's files on every load so a rebuilt UI shows up
+// without a hard refresh.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
+});
 
 app.MapGet("/api/indicators", (IPluginCatalog plugins) =>
     plugins.Indicators.Select(r => new { name = r.Indicator.Name, source = r.Source }));
