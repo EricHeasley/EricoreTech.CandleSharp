@@ -72,13 +72,17 @@ async function loadSeries() {
   $("pat-summary").hidden = true;
   setStatus("Loading…");
   try {
-    const [series, analysts, verdict, dividends, social] = await Promise.all([
+    const [series, analysts, verdict, dividends, social, rules, operands] = await Promise.all([
       api(`/api/series/${encodeURIComponent(ticker)}?interval=${encodeURIComponent(interval)}`),
       api(`/api/analyze/${encodeURIComponent(ticker)}?interval=${encodeURIComponent(interval)}`).catch(() => []),
       api(`/api/verdict/${encodeURIComponent(ticker)}?interval=${encodeURIComponent(interval)}`).catch(() => null),
       api(`/api/dividends/${encodeURIComponent(ticker)}`).catch(() => null),
       api(`/api/social/${encodeURIComponent(ticker)}`).catch(() => null),
+      api(`/api/rules/${encodeURIComponent(ticker)}?interval=${encodeURIComponent(interval)}`).catch(() => []),
+      api(`/api/rules/${encodeURIComponent(ticker)}/operands?interval=${encodeURIComponent(interval)}`).catch(() => ({ values: [], stances: [] })),
     ]);
+    state.rules = rules;
+    state.operands = operands;
     state.series = series;
     state.analysts = analysts;
     state.verdict = verdict;
@@ -99,7 +103,7 @@ function setStatus(text, isError = false) {
 }
 
 function showCards(show) {
-  for (const id of ["price-card", "rsi-card", "signals-card", "table-card", "simulator-card", "patterns-card"])
+  for (const id of ["price-card", "rsi-card", "signals-card", "table-card", "simulator-card", "patterns-card", "rules-card"])
     $(id).hidden = !show;
   if (show) {
     $("sim-headline").hidden = true;
@@ -123,6 +127,8 @@ function columnByName(name) {
 function renderAll() {
   showCards(true);
   renderVerdict();
+  renderRules();
+  refreshBuilderOperands();
   renderDividends();
   renderSocial();
   renderLegend();
@@ -321,6 +327,17 @@ function patternRow(p, showActive) {
     if (cls) td.className = cls;
     tr.appendChild(td);
   }
+  const action = document.createElement("td");
+  if (p.ruleConditions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "small";
+    button.textContent = "Use as rule";
+    button.title = "Open the rule builder pre-filled with this pattern";
+    button.addEventListener("click", () => useAsRule(p));
+    action.appendChild(button);
+  }
+  tr.appendChild(action);
   return tr;
 }
 
@@ -328,7 +345,7 @@ function fillPatternTable(id, rows, showActive) {
   const table = $(id);
   table.replaceChildren();
   const head = table.createTHead().insertRow();
-  for (const h of ["Condition", "Times", "Avg", "Up", "Edge", "t", "Held-out", ...(showActive ? ["Active in"] : [])]) {
+  for (const h of ["Condition", "Times", "Avg", "Up", "Edge", "t", "Held-out", ...(showActive ? ["Active in"] : []), ""]) {
     const th = document.createElement("th");
     th.textContent = h;
     head.appendChild(th);
@@ -390,6 +407,8 @@ async function runPatterns(event) {
     if (!$("pat-all").checked) params.set("tickers", ticker);
     const r = await api(`/api/patterns?${params}`);
     const pooled = r.tickers.length > 1;
+    state.patternsPooled = pooled;
+    state.patternsHorizon = r.horizon;
     summary.textContent =
       `${r.tickers.join(", ")} · ${r.horizon}-bar forward return · baseline ${pctFmt(r.baseline.avgReturn)} ` +
       `(${Math.round(r.baseline.winRate * 100)}% up) · ${r.tested} conditions tested, ${r.notable} notable ` +
@@ -406,6 +425,303 @@ async function runPatterns(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+// ---------- buy/sell rules ----------
+
+const VALUE_OPS = ["<", "<=", ">", ">=", "crosses above", "crosses below"];
+const STANCE_OPS = ["is Bullish", "is Bearish", "turns Bullish", "turns Bearish"];
+
+function renderRules() {
+  const list = $("rule-list");
+  list.replaceChildren();
+  const rules = state.rules || [];
+  if (rules.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "No rules for this stock yet. Create one below, or use \"Use as rule\" on a pattern.";
+    list.appendChild(p);
+    return;
+  }
+  // Firing rules first.
+  for (const r of [...rules].sort((a, b) => b.firingNow - a.firingNow)) list.appendChild(ruleCard(r));
+}
+
+function ruleCard(r) {
+  const buy = r.rule.action === "Buy";
+  const card = document.createElement("div");
+  card.className = `rule ${buy ? "buy" : "sell"}${r.firingNow ? " firing" : ""}`;
+
+  const head = document.createElement("div");
+  head.className = "head";
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  badge.textContent = r.error ? "error"
+    : r.firingNow ? `${buy ? "▲ BUY" : "▼ SELL"} NOW${r.newSignal ? " (new today)" : ""}`
+    : `${buy ? "buy" : "sell"} · waiting`;
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = r.rule.name;
+  const scope = document.createElement("span");
+  scope.className = "scope";
+  scope.textContent = r.rule.ticker === "*" ? "every stock" : r.rule.ticker;
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "delete";
+  del.textContent = "Delete";
+  del.addEventListener("click", () => deleteRule(r.rule));
+  head.append(badge, name, scope, del);
+  card.appendChild(head);
+
+  const conds = document.createElement("div");
+  conds.className = "conds";
+  conds.textContent = r.rule.conditions.join("  AND  ");
+  card.appendChild(conds);
+
+  const stats = document.createElement("div");
+  stats.className = "stats";
+  if (r.error) {
+    stats.className = "stats error";
+    stats.textContent = r.error;
+  } else if (r.signalCount === 0) {
+    stats.textContent = "Never fired in the stored history.";
+  } else if (r.scored === 0) {
+    stats.textContent = `Fired ${r.signalCount} time(s), last on ${fmtDate(r.lastSignal)}. Not enough bars since to score it yet.`;
+  } else {
+    const hit = document.createElement("b");
+    hit.className = r.hitRate >= 0.5 ? "good" : "bad";
+    hit.textContent = `${Math.round(r.hitRate * 100)}% right`;
+    const edge = document.createElement("b");
+    edge.className = r.edge > 0 ? "good" : "bad";
+    edge.textContent = `${pctFmt(r.edge)} vs a typical ${r.rule.horizon}-bar stretch`;
+    stats.append(
+      `Fired ${r.signalCount} time(s), last on ${fmtDate(r.lastSignal)}. `, hit,
+      ` (${buy ? "higher" : "lower"} ${r.rule.horizon} bars later) · avg move ${pctFmt(r.avgReturn)} · `, edge,
+      ` · best ${pctFmt(r.best)}, worst ${pctFmt(r.worst)}`);
+    if (r.scored < 10) stats.append(" · few signals, treat with caution");
+  }
+  card.appendChild(stats);
+
+  if (!r.error && r.recentSignals.length > 0) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Past signals";
+    const table = document.createElement("table");
+    const headRow = table.createTHead().insertRow();
+    for (const h of ["Date", "Close", `${r.rule.horizon} bars later`]) {
+      const th = document.createElement("th");
+      th.textContent = h;
+      headRow.appendChild(th);
+    }
+    const body = table.createTBody();
+    for (const s of r.recentSignals) {
+      const row = body.insertRow();
+      const aligned = s.forwardReturn == null ? null : (buy ? s.forwardReturn : -s.forwardReturn);
+      const cells = [
+        [fmtDate(s.date), ""],
+        [fmt(s.close), "num"],
+        [s.forwardReturn == null ? "pending" : pctFmt(s.forwardReturn),
+          `num ${aligned == null ? "held-na" : aligned > 0 ? "dir-bullish" : "dir-bearish"}`],
+      ];
+      for (const [text, cls] of cells) {
+        const td = row.insertCell();
+        td.textContent = text;
+        if (cls) td.className = cls;
+      }
+    }
+    const scroll = document.createElement("div");
+    scroll.className = "table-scroll";
+    scroll.appendChild(table);
+    details.append(summary, scroll);
+    card.appendChild(details);
+  }
+  return card;
+}
+
+async function reloadRules() {
+  const [ticker, interval] = ($("dataset-select").value || "").split("|");
+  state.rules = await api(`/api/rules/${encodeURIComponent(ticker)}?interval=${encodeURIComponent(interval)}`).catch(() => []);
+  renderRules();
+}
+
+async function deleteRule(rule) {
+  if (!confirm(`Delete the rule "${rule.name}"?`)) return;
+  try {
+    await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: "DELETE" });
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+  await reloadRules();
+}
+
+// Parses rule-condition text back into builder fields.
+function parseCondition(text) {
+  let m = /^(.+?) (is|turns) (bullish|bearish|neutral)$/i.exec(text.trim());
+  if (m) return { kind: "s", operand: m[1], op: `${m[2].toLowerCase()} ${m[3][0].toUpperCase()}${m[3].slice(1).toLowerCase()}`, value: "" };
+  m = /^(.+?) (<=|>=|<|>|crosses above|crosses below) (.+)$/i.exec(text.trim());
+  if (m) return { kind: "v", operand: m[1], op: m[2].toLowerCase(), value: m[3] };
+  return null;
+}
+
+function fillOperandSelect(select, selected) {
+  const ops = state.operands || { values: [], stances: [] };
+  select.replaceChildren();
+  const groups = [["Prices & indicator values", "v", ops.values], ["Indicator signals", "s", ops.stances]];
+  for (const [label, kind, names] of groups) {
+    const group = document.createElement("optgroup");
+    group.label = label;
+    const all = [...names];
+    // Keep a pre-filled operand such as "SMA_50 vs close" even though it isn't a plain name.
+    if (selected && selected.kind === kind && selected.operand && !all.includes(selected.operand)) all.unshift(selected.operand);
+    for (const name of all) {
+      const option = document.createElement("option");
+      option.value = `${kind}:${name}`;
+      option.textContent = name;
+      group.appendChild(option);
+    }
+    select.appendChild(group);
+  }
+  if (selected) select.value = `${selected.kind}:${selected.operand}`;
+}
+
+function syncOperatorOptions(row, selectedOp) {
+  const kind = row.querySelector(".operand").value.split(":")[0];
+  const opSelect = row.querySelector(".op");
+  const previous = selectedOp ?? opSelect.value;
+  opSelect.replaceChildren();
+  for (const op of kind === "s" ? STANCE_OPS : VALUE_OPS) {
+    const option = document.createElement("option");
+    option.value = op;
+    option.textContent = op;
+    opSelect.appendChild(option);
+  }
+  if ([...opSelect.options].some(o => o.value === previous)) opSelect.value = previous;
+  row.querySelector(".value").hidden = kind === "s";
+}
+
+function addConditionRow(prefill) {
+  const row = document.createElement("div");
+  row.className = "rule-condition";
+  const joiner = document.createElement("span");
+  joiner.className = "joiner";
+  const operand = document.createElement("select");
+  operand.className = "operand";
+  operand.setAttribute("aria-label", "Indicator");
+  const op = document.createElement("select");
+  op.className = "op";
+  op.setAttribute("aria-label", "Comparison");
+  const value = document.createElement("input");
+  value.className = "value";
+  value.placeholder = "30, -2%, or SMA_50";
+  value.setAttribute("list", "rule-value-names");
+  value.setAttribute("aria-label", "Value");
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "small";
+  remove.textContent = "✕";
+  remove.title = "Remove this condition";
+  remove.addEventListener("click", () => { row.remove(); relabelConditions(); });
+  row.append(joiner, operand, op, value, remove);
+  $("rule-conditions").appendChild(row);
+
+  fillOperandSelect(operand, prefill);
+  if (!prefill) {
+    const rsi = [...operand.options].find(o => o.value === "v:RSI_14");
+    if (rsi) operand.value = rsi.value;
+  }
+  syncOperatorOptions(row, prefill?.op);
+  if (prefill) value.value = prefill.value;
+  operand.addEventListener("change", () => syncOperatorOptions(row));
+  relabelConditions();
+}
+
+function relabelConditions() {
+  [...$("rule-conditions").children].forEach((row, i) => {
+    row.querySelector(".joiner").textContent = i === 0 ? "if" : "and";
+  });
+}
+
+// Re-fills operand lists after switching stocks, keeping what each row had selected.
+function refreshBuilderOperands() {
+  const datalist = $("rule-value-names");
+  datalist.replaceChildren();
+  for (const name of (state.operands?.values || [])) {
+    const option = document.createElement("option");
+    option.value = name;
+    datalist.appendChild(option);
+  }
+  const container = $("rule-conditions");
+  if (container.children.length === 0) {
+    addConditionRow();
+    return;
+  }
+  for (const row of container.children) {
+    const [kind, ...rest] = row.querySelector(".operand").value.split(":");
+    fillOperandSelect(row.querySelector(".operand"), { kind, operand: rest.join(":") });
+    syncOperatorOptions(row);
+  }
+}
+
+function conditionText(row) {
+  const [kind, ...rest] = row.querySelector(".operand").value.split(":");
+  const operand = rest.join(":");
+  const op = row.querySelector(".op").value;
+  return kind === "s" ? `${operand} ${op}` : `${operand} ${op} ${row.querySelector(".value").value.trim()}`;
+}
+
+async function saveRule(event) {
+  event.preventDefault();
+  const [ticker, interval] = ($("dataset-select").value || "").split("|");
+  const status = $("rule-status");
+  const rows = [...$("rule-conditions").children];
+  const fail = message => {
+    status.textContent = message;
+    status.classList.add("error");
+  };
+  if (rows.length === 0) return fail("Add at least one condition.");
+  if (rows.some(r => !r.querySelector(".value").hidden && !r.querySelector(".value").value.trim()))
+    return fail("Fill in a value for every comparison.");
+
+  const button = $("rule-save");
+  button.disabled = true;
+  try {
+    await api("/api/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: $("rule-name").value.trim() || null,
+        ticker: $("rule-scope").value === "*" ? "*" : ticker,
+        action: $("rule-action").value,
+        conditions: rows.map(conditionText),
+        horizon: Number($("rule-horizon").value) || 10,
+        interval,
+      }),
+    });
+    status.textContent = "Saved.";
+    status.classList.remove("error");
+    $("rule-name").value = "";
+    $("rule-conditions").replaceChildren();
+    addConditionRow();
+    $("rule-builder").open = false;
+    await reloadRules();
+  } catch (err) {
+    fail(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function useAsRule(pattern) {
+  $("rule-conditions").replaceChildren();
+  for (const text of pattern.ruleConditions) addConditionRow(parseCondition(text));
+  $("rule-action").value = pattern.edge >= 0 ? "Buy" : "Sell";
+  $("rule-scope").value = state.patternsPooled ? "*" : "this";
+  $("rule-horizon").value = state.patternsHorizon || 10;
+  $("rule-name").value = pattern.label;
+  $("rule-status").textContent = "Check the conditions, then Save rule.";
+  $("rule-status").classList.remove("error");
+  $("rule-builder").open = true;
+  $("rules-card").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderSocial() {
@@ -877,6 +1193,8 @@ $("fetch-form").addEventListener("submit", async event => {
 
 $("simulator-form").addEventListener("submit", runSimulation);
 $("patterns-form").addEventListener("submit", runPatterns);
+$("rule-form").addEventListener("submit", saveRule);
+$("rule-add-condition").addEventListener("click", () => addConditionRow());
 $("social-btn").addEventListener("click", pullSocial);
 
 $("refresh-btn").addEventListener("click", async () => {

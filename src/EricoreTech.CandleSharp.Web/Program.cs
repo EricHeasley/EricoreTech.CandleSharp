@@ -23,6 +23,7 @@ builder.Services.AddSingleton<ISocialFeed, StockTwitsClient>();
 builder.Services.AddSingleton<ISocialRepository>(new JsonSocialStore(dataDir));
 builder.Services.AddSingleton<IAgentStateStore>(new JsonAgentStateStore(dataDir));
 builder.Services.AddSingleton<ISnapshotRepository>(new CsvSnapshotRepository(dataDir));
+builder.Services.AddSingleton<IRuleRepository>(new JsonRuleStore(dataDir));
 builder.Services.AddSingleton<IPluginCatalog>(sp => new PluginCatalog(pluginsDir,
     error => sp.GetRequiredService<ILoggerFactory>().CreateLogger("Plugins")
         .LogWarning("plugin warning: {Error}", error)));
@@ -33,6 +34,7 @@ builder.Services.AddSingleton<SocialService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<WatchService>();
 builder.Services.AddSingleton<PatternService>();
+builder.Services.AddSingleton<RuleService>();
 
 var app = builder.Build();
 
@@ -298,6 +300,51 @@ app.MapGet("/api/patterns", (string? tickers, string? interval, int? horizon, in
     }
 });
 
+// User-defined buy/sell rules.
+app.MapGet("/api/rules/{ticker}", (string ticker, string? interval, RuleService rules) =>
+{
+    try
+    {
+        return Results.Ok(rules.Evaluate(ticker, interval ?? "1d").Select(RuleResultDto));
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+});
+
+app.MapGet("/api/rules/{ticker}/operands", (string ticker, string? interval, RuleService rules) =>
+{
+    try
+    {
+        var operands = rules.Operands(ticker, interval ?? "1d");
+        return Results.Ok(new { values = operands.Values, stances = operands.Stances });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/rules", (RuleRequest request, RuleService rules) =>
+{
+    try
+    {
+        if (!Enum.TryParse<RuleAction>(request.Action, ignoreCase: true, out var action))
+            return Results.BadRequest(new { error = "action must be Buy or Sell" });
+        var rule = rules.Add(request.Name, request.Ticker ?? TradeRule.AnyTicker, action,
+            request.Conditions ?? [], request.Horizon ?? 10, request.Interval ?? "1d");
+        return Results.Ok(RuleDto(rule));
+    }
+    catch (Exception ex) when (ex is ArgumentException or FormatException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapDelete("/api/rules/{id}", (string id, RuleService rules) =>
+    rules.Remove(id) ? Results.Ok(new { removed = id }) : Results.NotFound(new { error = $"no rule {id}" }));
+
 app.MapGet("/report/{ticker}", (string ticker, string? interval, ReportService reports) =>
 {
     try
@@ -373,6 +420,43 @@ static object PatternDto(PatternStat p) => new
     oosEdge = p.OosEdge,
     holdsOutOfSample = p.HoldsOutOfSample,
     activeIn = p.ActiveIn,
+    ruleConditions = p.RuleConditions,
+};
+
+static object RuleDto(TradeRule r) => new
+{
+    id = r.Id,
+    name = r.Name,
+    ticker = r.Ticker,
+    action = r.Action.ToString(),
+    conditions = r.Conditions,
+    horizon = r.Horizon,
+};
+
+static object RuleResultDto(RuleResult r) => new
+{
+    rule = RuleDto(r.Rule),
+    ticker = r.Ticker,
+    asOf = r.AsOf,
+    firingNow = r.FiringNow,
+    newSignal = r.NewSignal,
+    activeBars = r.ActiveBars,
+    signalCount = r.Signals.Count,
+    lastSignal = r.LastSignal,
+    scored = r.Scored,
+    avgReturn = r.AvgReturn,
+    hitRate = r.HitRate,
+    edge = r.Edge,
+    best = r.Best,
+    worst = r.Worst,
+    baselineReturn = r.BaselineReturn,
+    error = r.Error,
+    recentSignals = r.Signals.TakeLast(15).Reverse().Select(s => new
+    {
+        date = s.Timestamp,
+        close = s.Close,
+        forwardReturn = s.ForwardReturn,
+    }),
 };
 
 static object AgentReportDto(AgentReport report) => new

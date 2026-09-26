@@ -6,7 +6,10 @@ namespace EricoreTech.CandleSharp.Domain
     /// patterns are discovered); Oos* numbers from the held-out recent part
     /// (where they are checked). Edge = average forward return minus the
     /// baseline average of the same period, so a positive edge means the
-    /// condition beat simply holding the stock.
+    /// condition beat simply holding the stock. RuleConditions is the same
+    /// condition in <see cref="RuleCondition"/> syntax, ready to save as a
+    /// <see cref="TradeRule"/>; null when it can't be written as one (a bucket
+    /// pooled over tickers has different cut points per ticker).
     /// </summary>
     public sealed record PatternStat(
         string Label,
@@ -21,7 +24,8 @@ namespace EricoreTech.CandleSharp.Domain
         double? OosWinRate,
         double? OosEdge,
         bool? HoldsOutOfSample,
-        IReadOnlyList<string> ActiveIn);
+        IReadOnlyList<string> ActiveIn,
+        IReadOnlyList<string>? RuleConditions = null);
 
     /// <summary>Forward-return baseline over every bar of one period.</summary>
     public sealed record BaselineStat(int Samples, double AvgReturn, double WinRate);

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CandleSharp</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='6' width='3' height='7' fill='%232a78d6'/%3E%3Crect x='7' y='3' width='3' height='10' fill='%230ca30c'/%3E%3Crect x='12' y='8' width='3' height='5' fill='%23eb6834'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="app.css?v=patterns">
+<link rel="stylesheet" href="app.css?v=rules">
 </head>
 <body>
 <header class="topbar">
@@ -66,6 +66,53 @@
     <div class="card-head"><h2>Bottom line</h2></div>
     <p class="verdict-headline" id="verdict-headline"></p>
     <ul class="verdict-details" id="verdict-details"></ul>
+  </section>
+
+  <section class="card" id="rules-card" hidden>
+    <div class="card-head">
+      <h2>My buy/sell rules</h2>
+      <span class="tagline">"when these are all true, it's a buy" — checked against this stock's history</span>
+    </div>
+    <div id="rule-list" class="rule-list"></div>
+    <details id="rule-builder" class="rule-builder">
+      <summary>＋ New rule</summary>
+      <form id="rule-form">
+        <div class="simulator-form">
+          <label class="field">
+            <span>When all of these are true…</span>
+            <select id="rule-action">
+              <option value="Buy">it's a BUY</option>
+              <option value="Sell">it's a SELL</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>For</span>
+            <select id="rule-scope">
+              <option value="this">this stock only</option>
+              <option value="*">every stock</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Score past signals over (bars)</span>
+            <input id="rule-horizon" type="number" min="1" step="1" value="10">
+          </label>
+          <label class="field grow">
+            <span>Name (optional)</span>
+            <input id="rule-name" placeholder="e.g. Oversold bounce" autocomplete="off">
+          </label>
+        </div>
+        <div id="rule-conditions" class="rule-conditions"></div>
+        <datalist id="rule-value-names"></datalist>
+        <div class="rule-actions">
+          <button type="button" id="rule-add-condition">＋ Add condition</button>
+          <button type="submit" id="rule-save" class="primary">Save rule</button>
+          <span id="rule-status" class="status"></span>
+        </div>
+        <p class="pat-note">Compare with a number (<code>30</code>, <code>-2%</code>) or another value (<code>SMA_50</code>).
+          "crosses above/below" is true only on the bar the line is crossed; "turns" only on the bar the signal flips.
+          Tip: in Indicator patterns below, "Use as rule" fills this in for you.</p>
+      </form>
+    </details>
   </section>
 
   <section class="card" id="patterns-card" hidden>
@@ -209,6 +256,6 @@
   </section>
 </main>
 
-<script src="app.js?v=patterns"></script>
+<script src="app.js?v=rules"></script>
 </body>
 </html>

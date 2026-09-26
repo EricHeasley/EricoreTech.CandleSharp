@@ -259,6 +259,46 @@ svg { display: block; width: 100%; height: auto; }
 .stance.bearish .dir { color: var(--down); }
 .stance.neutral .dir { color: var(--muted); }
 
+/* Buy/sell rules */
+.rule-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.rule-list .empty { color: var(--muted); font-size: 13px; }
+.rule {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--grid);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.rule.firing.buy { border-left-color: var(--up); }
+.rule.firing.sell { border-left-color: var(--down); }
+.rule .head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rule .badge { font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--grid); color: var(--muted); }
+.rule.firing.buy .badge { background: var(--up); border-color: var(--up); color: #fff; }
+.rule.firing.sell .badge { background: var(--down); border-color: var(--down); color: #fff; }
+.rule .name { font-weight: 600; }
+.rule .scope { color: var(--muted); font-size: 12px; }
+.rule .delete { margin-left: auto; padding: 2px 8px; font-size: 12px; }
+.rule .conds { margin: 4px 0; color: var(--ink-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.rule .stats { color: var(--ink-2); }
+.rule .stats b.good { color: var(--up); }
+.rule .stats b.bad { color: var(--down); }
+.rule .error { color: var(--down); }
+.rule details { margin-top: 4px; }
+.rule-builder { border-top: 1px solid var(--grid); padding-top: 8px; }
+.rule-builder summary { font-weight: 600; color: var(--accent); }
+.rule-conditions { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.rule-condition { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.rule-condition .joiner { width: 34px; color: var(--muted); font-size: 12px; }
+.rule-condition select, .rule-condition input {
+  font: inherit; padding: 5px 8px; border: 1px solid var(--axis); border-radius: 6px;
+  background: var(--surface); color: var(--ink);
+}
+.rule-condition input { width: 140px; }
+.rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.small { padding: 2px 8px; font-size: 12px; }
+.field.grow { flex: 1; min-width: 180px; }
+
 /* Indicator patterns */
 .field.inline { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
 .pat-summary { margin: 6px 0; font-size: 13px; color: var(--ink-2); }

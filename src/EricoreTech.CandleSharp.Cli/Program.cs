@@ -26,6 +26,7 @@ static async Task<int> RunAsync(string[] args)
     var social = new SocialService(socialRepository, socialFeed);
     var reports = new ReportService(analysis, market, simulation, social);
     var patterns = new PatternService(repository, new CsvSnapshotRepository(repository.DataDirectory), catalog);
+    var ruleService = new RuleService(repository, new JsonRuleStore(repository.DataDirectory), catalog);
     var watch = new WatchService(repository, dividendRepository, socialRepository, catalog, new JsonAgentStateStore(repository.DataDirectory), feed);
 
     var command = positional[0];
@@ -52,6 +53,8 @@ static async Task<int> RunAsync(string[] args)
             "report" => RunReport(rest, opts, reports, market),
             "snapshot" => RunSnapshot(rest, opts, patterns, catalog),
             "patterns" => RunPatterns(rest, opts, patterns, catalog),
+            "rules" => RunRules(rest, opts, ruleService),
+            "rule" => RunRule(rest, opts, ruleService),
             _ => Usage($"Unknown command: {command}"),
         };
     }
@@ -537,6 +540,88 @@ static string Pct(double value, int decimals = 2)
     return Math.Round(value, decimals + 2).ToString($"+0.{digits}%;-0.{digits}%;0.{digits}%", CultureInfo.InvariantCulture);
 }
 
+static int RunRules(List<string> rest, Dictionary<string, string> opts, RuleService rules)
+{
+    var interval = opts.GetValueOrDefault("interval", "1d");
+    if (rules.List().Count == 0)
+    {
+        Console.WriteLine("No rules saved yet. Add one, e.g.:");
+        Console.WriteLine("  candlesharp rule add AAPL buy \"RSI_14 < 30\" \"Close > SMA_50\" --name \"Dip in uptrend\"");
+        return 0;
+    }
+
+    var results = rest.Count > 0 ? rules.Evaluate(rest[0], interval) : rules.EvaluateAll(interval);
+    if (results.Count == 0)
+    {
+        Console.WriteLine(rest.Count > 0 ? $"No rules apply to {rest[0].ToUpperInvariant()}." : "No rules apply to any saved dataset.");
+        return 0;
+    }
+
+    var firing = results.Where(r => r.FiringNow).ToList();
+    Console.WriteLine(firing.Count == 0
+        ? "No rule is firing on the latest bar."
+        : $"{firing.Count} rule(s) firing on the latest bar:");
+    foreach (var r in firing)
+        Console.WriteLine($"  {(r.Rule.Action == RuleAction.Buy ? "▲ BUY " : "▼ SELL")} {r.Ticker,-8} {r.Rule.Name}{(r.NewSignal ? "  (new today)" : "")}");
+
+    Console.WriteLine();
+    foreach (var r in results.OrderByDescending(r => r.FiringNow).ThenBy(r => r.Ticker))
+    {
+        var status = r.Error is not null ? "ERROR"
+            : r.FiringNow ? (r.Rule.Action == RuleAction.Buy ? "BUY NOW" : "SELL NOW")
+            : "waiting";
+        Console.WriteLine($"[{r.Rule.Id}] {r.Ticker,-8} {r.Rule.Action.ToString().ToUpperInvariant(),-4} {status,-8} {r.Rule.Name}");
+        Console.WriteLine($"    when {string.Join(" AND ", r.Rule.Conditions)}");
+        if (r.Error is not null)
+            Console.WriteLine($"    {r.Error}");
+        else if (r.Signals.Count == 0)
+            Console.WriteLine("    never fired in the stored history");
+        else if (r.Scored == 0)
+            Console.WriteLine($"    fired {r.Signals.Count} time(s), last {r.LastSignal:yyyy-MM-dd}; not enough bars since to score");
+        else
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    fired {r.Signals.Count} time(s), last {r.LastSignal:yyyy-MM-dd}; {r.HitRate * 100:0}% right after {r.Rule.Horizon} bars, " +
+                $"avg move {Pct(r.AvgReturn!.Value)}, edge {Pct(r.Edge!.Value)} vs a typical stretch{(r.Scored < 10 ? " (few signals)" : "")}"));
+    }
+    Console.WriteLine();
+    Console.WriteLine("Edge = how much better than an average bar each signal did in the rule's direction. Not financial advice.");
+    return 0;
+}
+
+static int RunRule(List<string> rest, Dictionary<string, string> opts, RuleService rules)
+{
+    var interval = opts.GetValueOrDefault("interval", "1d");
+    switch (rest.FirstOrDefault())
+    {
+        case "add" when rest.Count >= 4:
+            if (!Enum.TryParse<RuleAction>(rest[2], ignoreCase: true, out var action))
+                return Usage("rule add needs buy or sell, e.g.: rule add AAPL buy \"RSI_14 < 30\"");
+            var rule = rules.Add(opts.TryGetValue("name", out var ruleName) ? ruleName : null, rest[1], action, rest.Skip(3).ToList(),
+                int.Parse(opts.GetValueOrDefault("horizon", "10"), CultureInfo.InvariantCulture), interval);
+            Console.WriteLine($"Saved rule {rule.Id}: {rule.Action.ToString().ToUpperInvariant()} {rule.Ticker} when {string.Join(" AND ", rule.Conditions)}");
+            Console.WriteLine($"Check it with: candlesharp rules{(rule.Ticker == TradeRule.AnyTicker ? "" : " " + rule.Ticker)}");
+            return 0;
+        case "remove" when rest.Count == 2:
+            if (!rules.Remove(rest[1]))
+            {
+                Console.Error.WriteLine($"No rule with id {rest[1]} (see: candlesharp rules)");
+                return 1;
+            }
+            Console.WriteLine($"Removed rule {rest[1]}.");
+            return 0;
+        case "fields" when rest.Count == 2:
+            var operands = rules.Operands(rest[1], interval);
+            Console.WriteLine("Values (compare with <, <=, >, >=, crosses above, crosses below):");
+            Console.WriteLine("  " + string.Join(", ", operands.Values));
+            Console.WriteLine("Signals (use with: is Bullish / is Bearish / turns Bullish / turns Bearish):");
+            Console.WriteLine("  " + string.Join(", ", operands.Stances));
+            Console.WriteLine("Add \"vs close\" to a price level to compare its distance from the close, e.g. \"SMA_50 vs close < -5%\".");
+            return 0;
+        default:
+            return Usage("rule needs: add <TICKER|*> <buy|sell> \"<condition>\"..., remove <id>, or fields <TICKER>");
+    }
+}
+
 static void PrintFullReport(TickerReport r)
 {
     var line = new string('=', 72);
@@ -726,6 +811,10 @@ static int Usage(string? error = null)
           candlesharp snapshot [TICKER...] [--interval 1d]
           candlesharp patterns [TICKER...] [--interval 1d] [--horizon 10] [--min-samples 30]
                                [--test 0.3] [--buckets 5] [--top 10] [--no-combos]
+          candlesharp rules [TICKER] [--interval 1d]
+          candlesharp rule add <TICKER|*> <buy|sell> "<condition>"... [--name "..."] [--horizon 10]
+          candlesharp rule remove <ID>
+          candlesharp rule fields <TICKER>
 
         Global options:
           --data-dir <dir>   Directory for local CSV files (default: ./data)
@@ -739,6 +828,7 @@ static int Usage(string? error = null)
           candlesharp signals AAPL
           candlesharp verdict AAPL
           candlesharp patterns AAPL --horizon 20
+          candlesharp rule add AAPL buy "RSI_14 < 30" "Close > SMA_50" --name "Dip in uptrend"
         """);
     return error is null ? 0 : 2;
 }
