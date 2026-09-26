@@ -72,6 +72,16 @@ namespace EricoreTech.CandleSharp.Application
             return results;
         }
 
+        /// <summary>
+        /// Proposes buy/sell rules from the ticker's own past performance (chosen on
+        /// older history, re-checked on recent history). Nothing is saved.
+        /// </summary>
+        public SuggestionReport Suggest(string ticker, string interval, SuggestOptions options)
+        {
+            var (data, leaky) = Load(ticker, interval);
+            return RuleSuggester.Suggest(ticker, data, options, leaky);
+        }
+
         /// <summary>The names a rule can use for this dataset, for building rules.</summary>
         public RuleOperands Operands(string ticker, string interval)
         {

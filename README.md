@@ -370,9 +370,34 @@ the top. Each rule shows how often it fired, how often it was right, the
 average move, and its edge over a typical stretch. Expand "Past signals" to see
 each one.
 
+**Let the app suggest rules.** Click **✨ Suggest rules from past
+performance** in the rules card (or run `candlesharp rule suggest AAPL`). It
+tries hundreds of candidate rules on the stock's older history:
+
+- every indicator stance and flip,
+- low and high values of every indicator,
+- the close crossing every average or band,
+- pairs of the best ones.
+
+It scores each one as a buy and as a sell, then re-checks the winners on the
+most recent 30% of history, which played no part in choosing them. Rules that
+fail that check are dropped. Each suggestion is graded:
+
+| Grade | Meaning |
+|---|---|
+| **Strong** | its score beats what luck alone would produce after trying that many rules (shown as the "luck bar"), **and** it clearly held up on recent data |
+| **Promising** | one of the two |
+| **Weak** | neither, so it may just be luck |
+
+If a stock has no Strong rules, the app says so. That usually means its past
+doesn't hold a reliable pattern. Click **Save rule** to keep a suggestion, or
+**Edit first** to tweak it in the builder. Options: `--horizon`,
+`--min-signals 8`, `--top 5`. API: `GET /api/rules/{ticker}/suggest?horizon=10`.
+
 **CLI:**
 
 ```bash
+candlesharp rule suggest AAPL          # rules proposed from AAPL's own history
 candlesharp rule add AAPL buy "RSI_14 < 30" "Close > SMA_50" --name "Dip in uptrend"
 candlesharp rule add '*' sell "RSI_14 > 70" "MACD_12_26_9 turns Bearish"   # every stock
 candlesharp rules            # every rule on every saved stock, firing ones first

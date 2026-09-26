@@ -70,6 +70,8 @@ async function loadSeries() {
   const [ticker, interval] = $("dataset-select").value.split("|");
   $("pat-results").hidden = true;
   $("pat-summary").hidden = true;
+  $("suggestions").hidden = true;
+  $("suggest-status").textContent = "";
   setStatus("Loading…");
   try {
     const [series, analysts, verdict, dividends, social, rules, operands] = await Promise.all([
@@ -724,6 +726,146 @@ function useAsRule(pattern) {
   $("rules-card").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// ---------- suggested rules ----------
+
+function statsLine(s, horizon, buy) {
+  return `${s.signals} signal(s), ${Math.round(s.hitRate * 100)}% right (${buy ? "higher" : "lower"} ${horizon} bars later), ` +
+    `avg move ${pctFmt(s.avgReturn)}, ${pctFmt(s.edge)} vs a typical stretch`;
+}
+
+function suggestionCard(s, horizon) {
+  const buy = s.rule.action === "Buy";
+  const card = document.createElement("div");
+  card.className = `rule suggestion ${buy ? "buy" : "sell"}`;
+
+  const head = document.createElement("div");
+  head.className = "head";
+  const grade = document.createElement("span");
+  grade.className = `grade ${s.strength.toLowerCase()}`;
+  grade.textContent = s.strength;
+  head.appendChild(grade);
+  if (s.firingNow) {
+    const now = document.createElement("span");
+    now.className = "now";
+    now.textContent = buy ? "▲ firing now" : "▼ firing now";
+    head.appendChild(now);
+  }
+  card.appendChild(head);
+
+  const conds = document.createElement("div");
+  conds.className = "conds";
+  conds.textContent = s.rule.conditions.join("  AND  ");
+  card.appendChild(conds);
+
+  const past = document.createElement("div");
+  past.className = "stats";
+  past.textContent = `Older history: ${statsLine(s.discovery, horizon, buy)}.`;
+  const recent = document.createElement("div");
+  recent.className = "stats";
+  recent.textContent = s.heldUp === true
+    ? `Recent check: held up — ${statsLine(s.recent, horizon, buy)}.`
+    : `Recent check: fired only ${s.recent?.signals ?? 0} time(s) — too few to judge.`;
+  card.append(past, recent);
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "small primary";
+  save.textContent = "Save rule";
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "small";
+  edit.textContent = "Edit first";
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      await api("/api/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${buy ? "Buy" : "Sell"}: ${s.rule.conditions.join(" and ")}`,
+          ticker: s.rule.ticker,
+          action: s.rule.action,
+          conditions: s.rule.conditions,
+          horizon: s.rule.horizon,
+          interval: ($("dataset-select").value || "").split("|")[1] || "1d",
+        }),
+      });
+      await reloadRules();
+      save.remove();
+      edit.remove();
+      const saved = document.createElement("span");
+      saved.className = "saved";
+      saved.textContent = "✓ Saved to your rules";
+      buttons.appendChild(saved);
+    } catch (err) {
+      save.disabled = false;
+      $("suggest-status").textContent = err.message;
+      $("suggest-status").classList.add("error");
+    }
+  });
+  edit.addEventListener("click", () => {
+    $("rule-conditions").replaceChildren();
+    for (const text of s.rule.conditions) addConditionRow(parseCondition(text));
+    $("rule-action").value = s.rule.action;
+    $("rule-scope").value = "this";
+    $("rule-horizon").value = s.rule.horizon;
+    $("rule-name").value = "";
+    $("rule-status").textContent = "Adjust the conditions, then Save rule.";
+    $("rule-status").classList.remove("error");
+    $("rule-builder").open = true;
+    $("rule-builder").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  buttons.append(save, edit);
+  card.appendChild(buttons);
+  return card;
+}
+
+function fillSuggestions(id, list, horizon) {
+  const container = $(id);
+  container.replaceChildren();
+  if (list.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "None held up on recent data.";
+    container.appendChild(p);
+  }
+  for (const s of list) container.appendChild(suggestionCard(s, horizon));
+}
+
+async function runSuggest() {
+  const [ticker, interval] = ($("dataset-select").value || "").split("|");
+  if (!ticker) return;
+  const button = $("suggest-btn");
+  const status = $("suggest-status");
+  button.disabled = true;
+  status.classList.remove("error");
+  status.textContent = "Testing hundreds of rules against this stock's history…";
+  try {
+    const params = new URLSearchParams({ interval, horizon: $("suggest-horizon").value || "10" });
+    const r = await api(`/api/rules/${encodeURIComponent(ticker)}/suggest?${params}`);
+    const all = [...r.buy, ...r.sell];
+    const strong = all.filter(s => s.strength === "Strong").length;
+    $("suggest-summary").textContent =
+      `Tried ${r.tested.toLocaleString("en-US")} rules on ${r.ticker}'s history up to ${fmtDate(r.discoveryEnd)}, ` +
+      `then re-checked the best on the recent part. With that many tried, a score (t) around ${r.luckBar.toFixed(1)} can happen by luck. ` +
+      (strong > 0
+        ? `${strong} strong rule(s) found.`
+        : "No strong rules: this stock's past doesn't show patterns that clearly beat luck, so treat these with suspicion.");
+    fillSuggestions("suggest-buy", r.buy, r.horizon);
+    fillSuggestions("suggest-sell", r.sell, r.horizon);
+    $("suggestions").hidden = false;
+    status.textContent = "";
+  } catch (err) {
+    status.textContent = err.message;
+    status.classList.add("error");
+    $("suggestions").hidden = true;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderSocial() {
   const card = $("social-card");
   const social = state.social;
@@ -1195,6 +1337,7 @@ $("simulator-form").addEventListener("submit", runSimulation);
 $("patterns-form").addEventListener("submit", runPatterns);
 $("rule-form").addEventListener("submit", saveRule);
 $("rule-add-condition").addEventListener("click", () => addConditionRow());
+$("suggest-btn").addEventListener("click", runSuggest);
 $("social-btn").addEventListener("click", pullSocial);
 
 $("refresh-btn").addEventListener("click", async () => {
