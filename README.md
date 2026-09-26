@@ -97,7 +97,8 @@ same `./plugins` directory, so both frontends always agree.
 
 API, if you want to script against it: `GET /api/datasets`,
 `GET /api/series/{ticker}?interval=1d`, `GET /api/indicators`,
-`POST /api/fetch {"ticker","period","interval"}`.
+`POST /api/fetch {"ticker","period","interval"}`,
+`GET /api/patterns?tickers=AAPL&horizon=10`.
 
 ## Shipped indicator packs
 
@@ -293,6 +294,66 @@ plugin. The reasoning strings are generated from the scorecards in code;
 the contract is shaped so an LLM narrator (as in ai-hedge-fund-net's
 `LlmTradeSignalGenerator`) can be slotted in later without changing agents
 or hosts.
+
+## Indicator patterns
+
+Store every indicator's reading for every bar, then ask which readings were
+followed by unusual performance:
+
+```bash
+dotnet run --project src/EricoreTech.CandleSharp.Cli -- snapshot            # journal every saved dataset
+dotnet run --project src/EricoreTech.CandleSharp.Cli -- patterns AAPL --horizon 20
+dotnet run --project src/EricoreTech.CandleSharp.Cli -- patterns             # pool every saved 1d ticker
+```
+
+`snapshot` writes `data/snapshots/<TICKER>_<interval>.csv`: one row per bar
+with the close, every indicator column, and one `stance:<NAME>` column per
+indicator. It is a plain CSV, so it opens in Excel or pandas too. Re-running it
+merges like candle storage does: new bars are appended and shared bars take
+the fresh values (prices get back-adjusted for splits and dividends, so the
+journal is kept consistent with the current price history). `patterns`
+brings the journal up to date first, so you rarely need `snapshot` by hand.
+
+`patterns` measures the forward return over the next `--horizon` bars
+(default 10) after every bar and compares it with the stock's average (the
+baseline) under four kinds of condition:
+
+| Kind | Example |
+|---|---|
+| stance | `RSI_14 is Bullish` |
+| fresh flip (trigger) | `MACD_12_26_9 turns Bearish` |
+| value bucket | `RSI_14 in bottom 20% (< 31.2)` |
+| two stances at once | `ICHIMOKU is Bearish + STOCH_14_3_3 is Bullish` |
+
+For each condition it reports how often it occurred, the average forward
+return, how often the stock was up, the **edge** over the baseline, and a
+t-score. It lists the strongest bullish and bearish edges, the patterns
+**active on the latest bar**, and a correlation table showing how each
+indicator's value lines up with the future return. Price-level columns
+(moving averages, bands, stops) are analyzed as distance from the close, and
+buckets use each ticker's own quantiles, so several tickers can be pooled.
+
+Guards against fooling yourself:
+
+- **Held-out check.** Patterns are found on the older 70% of each ticker's
+  history (`--test 0.3`). The recent 30% is used only to check that each
+  edge kept its sign, which the report shows as "held" or "FAILED".
+- **Chance baseline.** Hundreds of conditions are tested, so some look
+  significant by luck. The summary shows how many notable (|t| ≥ 2) results
+  pure chance would produce and how many held out of sample. On a random
+  walk you will see roughly the chance count, and about half of them fail.
+- **Overlap-aware t-score.** Consecutive bars share most of their forward
+  window, so only non-overlapping windows count as independent samples.
+- **Lookahead detection.** Any indicator output whose past values change
+  once later bars exist is excluded and listed, for example Ichimoku's
+  `CHIKOU`, which is the close 26 bars *later* plotted back. This is detected
+  empirically, so it covers plugins too.
+
+Options: `--min-samples 30`, `--buckets 5`, `--top 10`, `--no-combos`,
+`--interval`. The dashboard has the same analysis in an "Indicator
+patterns" card (`GET /api/patterns?tickers=AAPL,MSFT&horizon=10`, where
+omitting `tickers` pools every saved dataset). These are historical
+statistics, not a trading system; use `backtest` to judge the agents.
 
 ## The indicator layers
 

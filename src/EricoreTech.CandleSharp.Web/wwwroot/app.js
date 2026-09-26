@@ -68,6 +68,8 @@ async function loadDatasets(selectTicker) {
 
 async function loadSeries() {
   const [ticker, interval] = $("dataset-select").value.split("|");
+  $("pat-results").hidden = true;
+  $("pat-summary").hidden = true;
   setStatus("Loading…");
   try {
     const [series, analysts, verdict, dividends, social] = await Promise.all([
@@ -97,7 +99,7 @@ function setStatus(text, isError = false) {
 }
 
 function showCards(show) {
-  for (const id of ["price-card", "rsi-card", "signals-card", "table-card", "simulator-card"])
+  for (const id of ["price-card", "rsi-card", "signals-card", "table-card", "simulator-card", "patterns-card"])
     $(id).hidden = !show;
   if (show) {
     $("sim-headline").hidden = true;
@@ -282,6 +284,125 @@ async function runSimulation(event) {
     headline.className = "sim-headline loss";
     headline.textContent = err.message;
     $("sim-details").hidden = true;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ---------- indicator patterns ----------
+
+const pctFmt = (v, digits = 2) => {
+  if (v == null) return "–";
+  const text = (v * 100).toFixed(digits);
+  // Rounds before signing so tiny negatives don't render as "-0.00%".
+  return Number(text) === 0 ? `${(0).toFixed(digits)}%` : `${v > 0 ? "+" : ""}${text}%`;
+};
+
+function patternRow(p, showActive) {
+  const held = p.holdsOutOfSample == null
+    ? { text: `n/a (${p.oosSamples})`, cls: "held-na" }
+    : p.holdsOutOfSample
+      ? { text: `held ${pctFmt(p.oosEdge)}`, cls: "held-yes" }
+      : { text: `failed ${pctFmt(p.oosEdge)}`, cls: "held-no" };
+  const cells = [
+    [p.label, ""],
+    [p.samples.toLocaleString("en-US"), "num"],
+    [pctFmt(p.avgReturn), "num"],
+    [`${Math.round(p.winRate * 100)}%`, "num"],
+    [pctFmt(p.edge), `num ${p.edge >= 0 ? "dir-bullish" : "dir-bearish"}`],
+    [p.tScore.toFixed(1), "num"],
+    [held.text, `num ${held.cls}`],
+  ];
+  if (showActive) cells.push([p.activeIn.join(", "), ""]);
+  const tr = document.createElement("tr");
+  for (const [text, cls] of cells) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (cls) td.className = cls;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+function fillPatternTable(id, rows, showActive) {
+  const table = $(id);
+  table.replaceChildren();
+  const head = table.createTHead().insertRow();
+  for (const h of ["Condition", "Times", "Avg", "Up", "Edge", "t", "Held-out", ...(showActive ? ["Active in"] : [])]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.appendChild(th);
+  }
+  const body = table.createTBody();
+  if (rows.length === 0) {
+    const td = body.insertRow().insertCell();
+    td.colSpan = 8;
+    td.textContent = "None with enough samples.";
+    td.className = "held-na";
+  }
+  for (const p of rows) body.appendChild(patternRow(p, showActive));
+}
+
+function fillColumnTable(columns) {
+  const table = $("pat-columns");
+  table.replaceChildren();
+  const buckets = columns[0]?.buckets.length ?? 5;
+  const head = table.createTHead().insertRow();
+  for (const h of ["Indicator", "rho", "Held-out rho", ...Array.from({ length: buckets }, (_, i) => `B${i + 1}`)]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.appendChild(th);
+  }
+  const body = table.createTBody();
+  const sorted = [...columns].sort((a, b) => Math.abs(b.correlation ?? 0) - Math.abs(a.correlation ?? 0));
+  for (const c of sorted) {
+    const tr = body.insertRow();
+    const cells = [
+      [c.relativeToClose ? `${c.column} vs close` : c.column, ""],
+      [c.correlation == null ? "–" : c.correlation.toFixed(2), "num"],
+      [c.oosCorrelation == null ? "–" : c.oosCorrelation.toFixed(2), "num"],
+      ...c.buckets.map(b => [b.samples ? pctFmt(b.avgReturn, 1) : "–",
+        `num bucket ${b.samples ? (b.edge >= 0 ? "dir-bullish" : "dir-bearish") : ""}`]),
+    ];
+    for (const [text, cls] of cells) {
+      const td = tr.insertCell();
+      td.textContent = text;
+      if (cls) td.className = cls;
+    }
+  }
+}
+
+async function runPatterns(event) {
+  event.preventDefault();
+  const [ticker, interval] = ($("dataset-select").value || "").split("|");
+  if (!ticker) return;
+  const button = $("pat-btn");
+  const summary = $("pat-summary");
+  button.disabled = true;
+  summary.hidden = false;
+  summary.textContent = "Recording snapshots and mining patterns…";
+  try {
+    const params = new URLSearchParams({
+      interval,
+      horizon: $("pat-horizon").value || "10",
+      minSamples: $("pat-min").value || "30",
+    });
+    if (!$("pat-all").checked) params.set("tickers", ticker);
+    const r = await api(`/api/patterns?${params}`);
+    const pooled = r.tickers.length > 1;
+    summary.textContent =
+      `${r.tickers.join(", ")} · ${r.horizon}-bar forward return · baseline ${pctFmt(r.baseline.avgReturn)} ` +
+      `(${Math.round(r.baseline.winRate * 100)}% up) · ${r.tested} conditions tested, ${r.notable} notable ` +
+      `vs ~${Math.round(r.chanceExpected)} expected by chance · ${r.notableHeld} of ${r.notableChecked} held on recent data` +
+      (r.excluded.length ? ` · excluded (uses future bars): ${r.excluded.join(", ")}` : "");
+    fillPatternTable("pat-active", r.activeNow, pooled);
+    fillPatternTable("pat-bullish", r.bullish, false);
+    fillPatternTable("pat-bearish", r.bearish, false);
+    fillColumnTable(r.columns);
+    $("pat-results").hidden = false;
+  } catch (err) {
+    summary.textContent = err.message;
+    $("pat-results").hidden = true;
   } finally {
     button.disabled = false;
   }
@@ -755,6 +876,7 @@ $("fetch-form").addEventListener("submit", async event => {
 });
 
 $("simulator-form").addEventListener("submit", runSimulation);
+$("patterns-form").addEventListener("submit", runPatterns);
 $("social-btn").addEventListener("click", pullSocial);
 
 $("refresh-btn").addEventListener("click", async () => {
