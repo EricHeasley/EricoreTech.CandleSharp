@@ -82,6 +82,23 @@ namespace EricoreTech.CandleSharp.Application
             return RuleSuggester.Suggest(ticker, data, options, leaky);
         }
 
+        /// <summary>
+        /// Evaluates a not-yet-saved rule against the ticker's stored history —
+        /// what a rule builder's live preview calls on every edit, so people see
+        /// "would fire N times, X% right" before they commit to saving anything.
+        /// </summary>
+        public RuleResult Preview(
+            string ticker, string interval, RuleAction action, IReadOnlyList<string> conditions, int horizon = 10)
+        {
+            var cleaned = conditions.Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
+            var draft = new TradeRule("", "preview", ticker, action, cleaned, Math.Max(horizon, 1));
+            if (cleaned.Count == 0)
+                return RuleResult.Failed(draft, ticker, "add at least one condition");
+
+            var (data, leaky) = Load(ticker, interval);
+            return Run(draft, ticker, data, leaky);
+        }
+
         /// <summary>The names a rule can use for this dataset, for building rules.</summary>
         public RuleOperands Operands(string ticker, string interval)
         {

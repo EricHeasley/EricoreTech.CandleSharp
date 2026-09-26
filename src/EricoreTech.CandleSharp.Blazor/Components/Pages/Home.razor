@@ -1,0 +1,120 @@
+@page "/"
+@implements IDisposable
+@inject EricoreTech.CandleSharp.Application.AnalysisService Analysis
+@inject EricoreTech.CandleSharp.Application.RuleService Rules
+@inject Services.DashboardState State
+
+<PageTitle>CandleSharp @(State.Ticker is null ? "" : $"· {State.Ticker}")</PageTitle>
+
+@if (State.Ticker is null)
+{
+    <section class="card empty-state">
+        <p>No local data yet. Fetch a ticker above, or from the command line:</p>
+        <pre>dotnet run --project src/EricoreTech.CandleSharp.Cli -- fetch AAPL --period 1y</pre>
+    </section>
+}
+else if (_series is null)
+{
+    <p class="tab-loading">Loading @State.Ticker…</p>
+}
+else if (_notFound)
+{
+    <section class="card"><p>No local data for @State.Ticker yet.</p></section>
+}
+else
+{
+    <TickerHeader Series="_series" Verdict="_verdict" FiringCount="_firingCount" />
+
+    <nav class="tabs">
+        @foreach (var tab in Tabs)
+        {
+            <button type="button" class="@(tab == _activeTab ? "active" : "")" @onclick="() => SelectTab(tab)">
+                @tab
+                @if (tab == "My Rules" && _firingCount > 0)
+                {
+                    <span class="tab-dot" title="@_firingCount rule(s) firing"></span>
+                }
+            </button>
+        }
+    </nav>
+
+    <section class="tab-body">
+        @switch (_activeTab)
+        {
+            case "Overview":
+                <BottomLineGauge Verdict="_verdict" />
+                <PriceChart Series="_series" Rules="_ruleResults" />
+                break;
+            case "My Rules":
+                <RulesPanel Series="_series" OnRulesChanged="ReloadRuleCount" PrefillPattern="_prefillPattern" />
+                break;
+            case "Patterns":
+                <PatternsPanel Ticker="@State.Ticker" Interval="@State.Interval" OnUseAsRule="HandleUseAsRule" />
+                break;
+            case "Indicators":
+                <SignalsPanel Series="_series" />
+                break;
+            case "Research":
+                <ResearchPanel Ticker="@State.Ticker" />
+                break;
+        }
+    </section>
+}
+
+@code {
+    private static readonly string[] Tabs = ["Overview", "My Rules", "Patterns", "Indicators", "Research"];
+    private string _activeTab = "Overview";
+
+    private EricoreTech.CandleSharp.Application.SeriesAnalysis? _series;
+    private EricoreTech.CandleSharp.Domain.Verdict? _verdict;
+    private IReadOnlyList<EricoreTech.CandleSharp.Domain.RuleResult> _ruleResults = [];
+    private EricoreTech.CandleSharp.Domain.PatternStat? _prefillPattern;
+    private int _firingCount;
+    private bool _notFound;
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+        Load();
+    }
+
+    private void OnStateChanged()
+    {
+        Load();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void Load()
+    {
+        if (State.Ticker is null) { _series = null; return; }
+        _notFound = false;
+        try
+        {
+            _series = Analysis.GetSeries(State.Ticker, State.Interval);
+            _verdict = Analysis.GetVerdict(State.Ticker, State.Interval);
+            ReloadRuleCount();
+        }
+        catch (FileNotFoundException)
+        {
+            _series = null;
+            _notFound = true;
+        }
+    }
+
+    private void ReloadRuleCount()
+    {
+        if (State.Ticker is null) return;
+        _ruleResults = Rules.Evaluate(State.Ticker, State.Interval);
+        _firingCount = _ruleResults.Count(r => r.FiringNow);
+    }
+
+    private void HandleUseAsRule(EricoreTech.CandleSharp.Domain.PatternStat pattern)
+    {
+        _prefillPattern = pattern;
+        _activeTab = "My Rules";
+    }
+
+    private void SelectTab(string tab) => _activeTab = tab;
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

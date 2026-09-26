@@ -100,6 +100,40 @@ API, if you want to script against it: `GET /api/datasets`,
 `POST /api/fetch {"ticker","period","interval"}`,
 `GET /api/patterns?tickers=AAPL&horizon=10`.
 
+## Blazor dashboard (interactive)
+
+```bash
+dotnet run --project src/EricoreTech.CandleSharp.Blazor
+```
+
+Open http://localhost:5000 (or whatever port it prints). A second, more
+interactive dashboard built with Blazor Server — same `./data`/`./plugins`,
+same feature set as the CLI's Application/Domain/Infrastructure layers, but
+reworked around the idea that everything should feel like one connected
+tool rather than a stack of report cards:
+
+- **Watchlist sidebar** — every saved ticker with a live price, day change,
+  a mini sparkline, and a green dot when one of your rules is firing on it;
+  click one to switch, or press `↑`/`↓`. Press `/` to jump to the ticker box.
+- **One interactive chart** — drag to pan, scroll to zoom, hover for a
+  tooltip, double-click to reset. A dropdown overlays any saved rule's past
+  signals on the candles (green = worked out, red = didn't), and clicking a
+  row in "Recent triggers" drops a highlight line at that bar.
+- **Tabs instead of one long scroll** — Overview (gauge + chart), My Rules,
+  Patterns, Indicators, Research (dividends/simulator/social).
+- **Live rule preview** — as you build a rule with the dropdowns, it
+  immediately shows how many times it would have fired and its hit rate,
+  before you save anything; no separate "test" step.
+- **Bottom line as a gauge** — a needle instead of a wall of bullet points,
+  with the full reasoning behind a "Why?" toggle.
+- **Patterns → rules in one click** — "Use as rule" on any pattern jumps to
+  the My Rules tab with the builder pre-filled.
+
+Because Blazor Server keeps the UI and the application services in the same
+process, every interaction (a slider drag, a rule preview, a suggestion)
+runs as a direct C# call — no separate JSON API to keep in sync, which is
+what makes the live preview and chart interactivity practical to build.
+
 ## Shipped indicator packs
 
 | Indicator | Stance logic |

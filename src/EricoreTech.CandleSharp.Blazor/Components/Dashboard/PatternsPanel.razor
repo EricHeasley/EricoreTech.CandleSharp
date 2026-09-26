@@ -1,0 +1,187 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+@inject PatternService Patterns
+
+<section class="card">
+    <div class="card-head">
+        <h2>Indicator patterns</h2>
+        <span class="tagline">stored indicator snapshots vs how the stock performed afterwards</span>
+    </div>
+
+    <div class="simulator-form">
+        <label class="field">
+            <span>Look ahead (bars)</span>
+            <input type="number" min="1" step="1" @bind="_horizon" />
+        </label>
+        <label class="field">
+            <span>Min samples</span>
+            <input type="number" min="2" step="1" @bind="_minSamples" />
+        </label>
+        <label class="field inline">
+            <input type="checkbox" @bind="_poolAll" />
+            <span>Pool every saved ticker</span>
+        </label>
+        <button type="button" class="primary" disabled="@_busy" @onclick="Run">Find patterns</button>
+    </div>
+
+    @if (_status.Length > 0)
+    {
+        <p class="pat-summary @(_error ? "error" : "")">@_status</p>
+    }
+
+    @if (_report is not null)
+    {
+        <p class="pat-summary">
+            Discovery: @_report.Baseline.Samples bars, baseline @Pct(_report.Baseline.AvgReturn) avg, @Math.Round(_report.Baseline.WinRate * 100)% up.
+            Held-out check: @_report.OosBaseline.Samples bars, baseline @Pct(_report.OosBaseline.AvgReturn) avg, @Math.Round(_report.OosBaseline.WinRate * 100)% up.
+        </p>
+        <p class="pat-summary">
+            @_report.Tested conditions with &gt;= @_report.Options.MinSamples samples; @_report.Notable notable (|t| &gt;= 2) vs ~@Math.Round(_report.ChanceExpected) expected by chance;
+            @_report.NotableHeld of @_report.NotableChecked checkable notable patterns kept their direction on held-out data.
+            @if (_report.Excluded.Count > 0)
+            {
+                @:Excluded (uses future bars): @string.Join(", ", _report.Excluded)
+            }
+        </p>
+
+        @RenderTable("Bullish edges — the stock did better than usual after these", _report.BullishEdges, false)
+        @RenderTable("Bearish edges — the stock did worse than usual after these", _report.BearishEdges, false)
+        @RenderTable("Active on the latest bar", _report.ActiveNow, _report.Tickers.Count > 1)
+
+        <details>
+            <summary>Indicator values vs forward return (rank correlation and average return by bucket, low &rarr; high)</summary>
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Indicator</th><th>rho</th><th>Held-out rho</th>
+                            @for (int i = 0; i < (_report.ColumnStudies.FirstOrDefault()?.Buckets.Count ?? 5); i++) { <th>B@(i + 1)</th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in _report.ColumnStudies.OrderByDescending(c => Math.Abs(c.Correlation ?? 0)))
+                        {
+                            <tr>
+                                <td>@(c.RelativeToClose ? $"{c.Column} vs close" : c.Column)</td>
+                                <td class="num">@(c.Correlation?.ToString("0.00") ?? "–")</td>
+                                <td class="num">@(c.OosCorrelation?.ToString("0.00") ?? "–")</td>
+                                @foreach (var b in c.Buckets)
+                                {
+                                    <td class="num bucket @(b.Samples == 0 ? "" : b.Edge >= 0 ? "dir-bullish" : "dir-bearish")">
+                                        @(b.Samples == 0 ? "–" : Pct1(b.AvgReturn))
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </details>
+        <p class="pat-note">Edge = average forward return minus the baseline. t counts only non-overlapping windows.
+            "Held-out" re-checks each pattern on the most recent 30% of history. Trust patterns that are notable (|t| &ge; 2) <em>and</em> held. Not financial advice.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Ticker { get; set; } = "";
+    [Parameter, EditorRequired] public string Interval { get; set; } = "1d";
+    [Parameter] public EventCallback<PatternStat> OnUseAsRule { get; set; }
+
+    private int _horizon = 10;
+    private int _minSamples = 30;
+    private bool _poolAll;
+    private bool _busy;
+    private string _status = "";
+    private bool _error;
+    private PatternReport? _report;
+
+    private string? _lastTicker;
+
+    protected override void OnParametersSet()
+    {
+        if (Ticker == _lastTicker) return;
+        _lastTicker = Ticker;
+        _report = null;
+        _status = "";
+    }
+
+    private async Task Run()
+    {
+        _busy = true;
+        _error = false;
+        _status = "Recording snapshots and mining patterns…";
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            var tickers = _poolAll ? Array.Empty<string>() : [Ticker];
+            var options = new PatternOptions(Horizon: Math.Max(1, _horizon), MinSamples: Math.Max(2, _minSamples));
+            _report = Patterns.Analyze(tickers, Interval, options);
+            _status = "";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            _status = ex.Message;
+            _error = true;
+            _report = null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Pct(double v) => $"{(v >= 0 ? "+" : "")}{(v * 100).ToString("0.00")}%";
+    private static string Pct1(double v) => $"{(v >= 0 ? "+" : "")}{(v * 100).ToString("0.0")}%";
+
+    private RenderFragment RenderTable(string title, IReadOnlyList<PatternStat> rows, bool showActive) => @<div>
+        <h3>@title</h3>
+        @if (rows.Count == 0)
+        {
+            <p class="empty">(none with enough samples)</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Condition</th><th>Times</th><th>Avg</th><th>Up</th><th>Edge</th><th>t</th><th>Held-out</th>
+                            @if (showActive) { <th>Active in</th> }
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in rows)
+                        {
+                            <tr>
+                                <td>@p.Label</td>
+                                <td class="num">@p.Samples.ToString("N0")</td>
+                                <td class="num">@Pct(p.AvgReturn)</td>
+                                <td class="num">@Math.Round(p.WinRate * 100)%</td>
+                                <td class="num @(p.Edge >= 0 ? "dir-bullish" : "dir-bearish")">@Pct(p.Edge)</td>
+                                <td class="num">@p.TScore.ToString("0.0")</td>
+                                <td class="num @(p.HoldsOutOfSample switch { true => "held-yes", false => "held-no", _ => "held-na" })">
+                                    @(p.HoldsOutOfSample switch
+                                    {
+                                        true => $"held {Pct(p.OosEdge ?? 0)}",
+                                        false => $"failed {Pct(p.OosEdge ?? 0)}",
+                                        _ => $"n/a (n={p.OosSamples})",
+                                    })
+                                </td>
+                                @if (showActive) { <td>@string.Join(", ", p.ActiveIn)</td> }
+                                <td>
+                                    @if (p.RuleConditions is not null)
+                                    {
+                                        <button type="button" class="small" title="Open the rule builder pre-filled with this pattern"
+                                                @onclick="() => OnUseAsRule.InvokeAsync(p)">Use as rule</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>;
+}

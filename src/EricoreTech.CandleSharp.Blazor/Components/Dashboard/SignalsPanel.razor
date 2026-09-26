@@ -1,0 +1,59 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+
+<section class="card">
+    <div class="card-head">
+        <h2>Signals</h2>
+        <label class="chip-toggle" style="margin-left:auto">
+            <input type="checkbox" @bind="_showNeutral" /> Show neutral too
+        </label>
+    </div>
+    <div class="signal-chip-row">
+        @foreach (var (name, stance) in Series.Signals.Stances.OrderBy(s => s.Key))
+        {
+            var current = stance[^1];
+            if (!_showNeutral && current == SignalDirection.Neutral) continue;
+            int since = stance.Length - 1;
+            while (since > 0 && stance[since - 1] == current) since--;
+            <span class="stance @(current.ToString().ToLowerInvariant())">
+                <span>@name</span>
+                <span class="dir">@(current == SignalDirection.Bullish ? "▲" : current == SignalDirection.Bearish ? "▼" : "▬") @current</span>
+                <span class="since">since @Series.Candles[since].Timestamp.ToString("yyyy-MM-dd")</span>
+            </span>
+        }
+    </div>
+
+    <h3>Recent triggers</h3>
+    <label class="field" style="max-width:220px">
+        <span>Filter by indicator</span>
+        <select @bind="_indicatorFilter">
+            <option value="">(all)</option>
+            @foreach (var name in Series.Signals.Stances.Keys.OrderBy(n => n)) { <option value="@name">@name</option> }
+        </select>
+    </label>
+    <div class="table-scroll">
+        <table>
+            <thead><tr><th>Date</th><th>Indicator</th><th>Direction</th></tr></thead>
+            <tbody>
+                @foreach (var t in Filtered().TakeLast(30).Reverse())
+                {
+                    <tr>
+                        <td>@t.Timestamp.ToString("yyyy-MM-dd")</td>
+                        <td>@t.Indicator</td>
+                        <td class="dir-@(t.Direction.ToString().ToLowerInvariant())">@(t.Direction == SignalDirection.Bullish ? "▲" : "▼") @t.Direction</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SeriesAnalysis Series { get; set; } = null!;
+
+    private bool _showNeutral;
+    private string _indicatorFilter = "";
+
+    private IEnumerable<Trigger> Filtered() =>
+        string.IsNullOrEmpty(_indicatorFilter) ? Series.Signals.Triggers : Series.Signals.Triggers.Where(t => t.Indicator == _indicatorFilter);
+}

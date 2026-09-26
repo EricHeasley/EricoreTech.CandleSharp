@@ -1,0 +1,68 @@
+@using EricoreTech.CandleSharp.Domain
+
+<section class="card">
+    <div class="card-head"><h2>Bottom line</h2></div>
+    @if (Verdict is null)
+    {
+        <p class="tab-loading">Computing…</p>
+    }
+    else
+    {
+        <div class="gauge-wrap">
+            <svg viewBox="0 0 200 112" width="200" height="112" role="img" aria-label="Buy/sell gauge">
+                <path d="@Band(-90, -30)" class="gauge-band sell" />
+                <path d="@Band(-30, 30)" class="gauge-band neutral" />
+                <path d="@Band(30, 90)" class="gauge-band buy" />
+                <line x1="100" y1="100" x2="@NeedleX.ToString("0.##")" y2="@NeedleY.ToString("0.##")"
+                      stroke="var(--ink)" stroke-width="3" stroke-linecap="round" />
+                <circle cx="100" cy="100" r="5" fill="var(--ink)" />
+            </svg>
+            <div class="gauge-details">
+                <p class="gauge-take @(Verdict.Direction.ToString().ToLowerInvariant())">
+                    @Icon(Verdict.Direction) @Verdict.Headline
+                </p>
+                <button type="button" class="gauge-toggle" @onclick="() => _expanded = !_expanded">
+                    @(_expanded ? "Hide details" : "Why?")
+                </button>
+                @if (_expanded)
+                {
+                    <ul class="verdict-details">
+                        @foreach (var d in Verdict.Details) { <li>@d</li> }
+                    </ul>
+                }
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public Verdict? Verdict { get; set; }
+    private bool _expanded;
+
+    // -100 (strong sell) .. 0 (neutral) .. +100 (strong buy)
+    private double Score => Verdict is null ? 0 : Verdict.Direction switch
+    {
+        SignalDirection.Bullish => Verdict.Confidence,
+        SignalDirection.Bearish => -Verdict.Confidence,
+        _ => 0,
+    };
+
+    private double AngleDeg => Math.Clamp(Score, -100, 100) * 0.9;
+    private double NeedleX => Point(AngleDeg, 78).x;
+    private double NeedleY => Point(AngleDeg, 78).y;
+
+    private static (double x, double y) Point(double angleDeg, double r)
+    {
+        double rad = angleDeg * Math.PI / 180;
+        return (100 + r * Math.Sin(rad), 100 - r * Math.Cos(rad));
+    }
+
+    private static string Band(double fromDeg, double toDeg)
+    {
+        var (x1, y1) = Point(fromDeg, 90);
+        var (x2, y2) = Point(toDeg, 90);
+        return $"M {x1:0.##} {y1:0.##} A 90 90 0 0 1 {x2:0.##} {y2:0.##}";
+    }
+
+    private static string Icon(SignalDirection d) => d switch { SignalDirection.Bullish => "▲", SignalDirection.Bearish => "▼", _ => "▬" };
+}

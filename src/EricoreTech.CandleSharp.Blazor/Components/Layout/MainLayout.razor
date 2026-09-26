@@ -1,0 +1,159 @@
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@inject EricoreTech.CandleSharp.Application.MarketDataService Market
+@inject Services.WatchlistService Watchlist
+@inject Services.DashboardState State
+@inject IJSRuntime JS
+
+<header class="topbar">
+    <h1>CandleSharp</h1>
+    <span class="tagline">by EricoreTech &middot; local storage &middot; pluggable indicators</span>
+
+    <form class="fetch-form" @onsubmit="DoFetch">
+        <label class="field">
+            <span>Jump to / add ticker <span class="chart-hint">(press /)</span></span>
+            <input id="ticker-search" list="known-tickers" @bind="_tickerInput" @bind:event="oninput"
+                   placeholder="e.g. AAPL" autocomplete="off" spellcheck="false" />
+            <datalist id="known-tickers">
+                @foreach (var t in _knownTickers) { <option value="@t"></option> }
+            </datalist>
+        </label>
+        <label class="field">
+            <span>Period</span>
+            <select @bind="_period">
+                <option>6mo</option>
+                <option selected>1y</option>
+                <option>2y</option>
+                <option>5y</option>
+                <option>max</option>
+            </select>
+        </label>
+        <button type="submit" disabled="@_busy">Fetch</button>
+    </form>
+    <button type="button" disabled="@_busy" title="Re-fetch the latest bars for every saved dataset" @onclick="DoRefreshAll">⟳ Refresh all</button>
+    <span class="status @(_error ? "error" : "")">@_status</span>
+</header>
+
+<div class="app-body">
+    <WatchlistSidebar @ref="_sidebar" />
+    <main class="main">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+@code {
+    private WatchlistSidebar? _sidebar;
+    private string _tickerInput = "";
+    private string _period = "1y";
+    private string _status = "";
+    private bool _error;
+    private bool _busy;
+    private List<string> _knownTickers = [];
+    private IJSObjectReference? _shortcuts;
+    private DotNetObjectReference<MainLayout>? _selfRef;
+
+    protected override void OnInitialized()
+    {
+        RefreshKnownTickers();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            _shortcuts = await JS.InvokeAsync<IJSObjectReference>("candlesharp.bindShortcuts", _selfRef);
+        }
+    }
+
+    private void RefreshKnownTickers() =>
+        _knownTickers = Watchlist.Build(State.Interval).Select(r => r.Ticker).ToList();
+
+    private async Task DoFetch()
+    {
+        var ticker = _tickerInput.Trim().ToUpperInvariant();
+        if (ticker.Length == 0) return;
+        _busy = true;
+        _error = false;
+        _status = $"Fetching {ticker}…";
+        StateHasChanged();
+        try
+        {
+            var result = await Market.FetchAsync(ticker, _period, "1d");
+            _status = $"{result.Ticker}: {result.Bars} bars saved";
+            _tickerInput = "";
+            RefreshKnownTickers();
+            _sidebar?.Refresh();
+            State.Select(result.Ticker, "1d");
+        }
+        catch (Exception ex)
+        {
+            _status = ex.Message;
+            _error = true;
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DoRefreshAll()
+    {
+        _busy = true;
+        _error = false;
+        _status = "Refreshing all datasets…";
+        StateHasChanged();
+        try
+        {
+            var result = await Market.RefreshAllAsync();
+            int fetched = result.Refreshed.Count(r => r.Mode == "fetched");
+            int derived = result.Refreshed.Count - fetched;
+            _status = $"Refreshed {fetched} dataset(s)" + (derived > 0 ? $", re-derived {derived}" : "");
+            if (result.Warnings.Count > 0)
+            {
+                _status += $" — {result.Warnings.Count} failed: {result.Warnings[0]}";
+                _error = true;
+            }
+            RefreshKnownTickers();
+            _sidebar?.Refresh();
+            State.NotifyDataChanged();
+        }
+        catch (Exception ex)
+        {
+            _status = ex.Message;
+            _error = true;
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void OnArrowKey(int direction)
+    {
+        var tickers = _knownTickers;
+        if (tickers.Count == 0 || State.Ticker is null) return;
+        int index = tickers.IndexOf(State.Ticker);
+        int next = ((index < 0 ? 0 : index) + direction + tickers.Count) % tickers.Count;
+        State.Select(tickers[next], State.Interval);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_shortcuts is not null)
+        {
+            try { await _shortcuts.InvokeVoidAsync("dispose"); } catch (JSDisconnectedException) { }
+            await _shortcuts.DisposeAsync();
+        }
+        _selfRef?.Dispose();
+    }
+}
