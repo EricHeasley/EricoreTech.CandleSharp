@@ -259,6 +259,15 @@ svg { display: block; width: 100%; height: auto; }
 .stance.bearish .dir { color: var(--down); }
 .stance.neutral .dir { color: var(--muted); }
 
+/* Indicator patterns */
+.field.inline { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
+.pat-summary { margin: 6px 0; font-size: 13px; color: var(--ink-2); }
+.pat-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.held-yes { color: var(--up); }
+.held-no { color: var(--down); }
+.held-na { color: var(--muted); }
+#pat-columns td.bucket { text-align: right; }
+
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--grid); }

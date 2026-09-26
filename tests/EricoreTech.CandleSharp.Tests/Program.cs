@@ -596,6 +596,84 @@ finally
     if (Directory.Exists(socialDir)) Directory.Delete(socialDir, recursive: true);
 }
 
+// --- Snapshot journal: round-trip, merge (fresh values win), kept out of the dataset list ---
+var snapDir = Path.Combine(Path.GetTempPath(), $"candlesharp-snap-{Guid.NewGuid():N}");
+try
+{
+    var snapEngine = new IndicatorEngine([new RsiIndicator(), new SmaCrossoverIndicator()]);
+    var snapRepo = new CsvSnapshotRepository(snapDir);
+    var firstPart = candles.Take(200).ToList();
+    int addedFirst = snapRepo.SaveSnapshots(SnapshotTable.FromEngine("snp", firstPart, snapEngine.Run(firstPart)), "1d");
+    int addedAll = snapRepo.SaveSnapshots(SnapshotTable.FromEngine("SNP", candles, snapEngine.Run(candles)), "1d");
+    var journal = snapRepo.LoadSnapshots("SNP", "1d")!;
+    var fresh = snapEngine.Run(candles);
+
+    Check(addedFirst == 200 && addedAll == 50, $"snapshot merge added {addedFirst}/{addedAll}, expected 200/50");
+    Check(journal.Count == 250 && journal.Ticker == "SNP", $"journal has {journal.Count} rows");
+    Check(journal.Stances.Keys.Order().SequenceEqual(fresh.Stances.Keys.Order()), "journal stance set mismatch");
+    Check(journal.Stances["RSI_14"].SequenceEqual(fresh.Stances["RSI_14"]), "journal stances differ from engine");
+    var rsiStored = journal.Columns.First(c => c.Name == "RSI_14").Values;
+    var rsiFresh = fresh.Columns.First(c => c.Name == "RSI_14").Values;
+    Check(Enumerable.Range(0, 250).All(i => rsiStored[i] is null ? rsiFresh[i] is null
+            : Math.Abs(rsiStored[i]!.Value - rsiFresh[i]!.Value) < 1e-5),
+        "journal RSI values differ from engine after round-trip");
+    Check(snapRepo.LoadSnapshots("NONE", "1d") is null, "missing journal should load as null");
+
+    new CsvCandleRepository(snapDir).Save(candles, "SNP", "1d");
+    Check(new CsvCandleRepository(snapDir).List().Count == 1, "snapshot journal leaked into the dataset list");
+}
+finally
+{
+    if (Directory.Exists(snapDir)) Directory.Delete(snapDir, recursive: true);
+}
+
+// --- LookaheadDetector: Chikou (close shifted back) is future data; RSI is not ---
+var (leakyColumns, leakyStances) = LookaheadDetector.Find(
+    new IndicatorEngine([new IchimokuIndicator(), new RsiIndicator()]), candles);
+Check(leakyColumns.SetEquals(["CHIKOU"]), $"lookahead columns: {string.Join(",", leakyColumns)}, expected CHIKOU");
+Check(leakyStances.Count == 0, $"lookahead stances: {string.Join(",", leakyStances)}, expected none");
+
+// --- PatternAnalyzer: a planted pattern is found, holds out of sample, and noise columns are excluded ---
+// Price climbs 1%/bar for 10 bars then falls 1%/bar for 10. "CYCLE" turns Bullish at
+// the bottom of each swing and Bearish at the top, so its 10-bar forward returns are
+// the full swing: strongly positive after Bullish, strongly negative after Bearish.
+int plantedBars = 600;
+var plantedCloses = new List<double> { 100 };
+for (int i = 1; i < plantedBars; i++)
+    plantedCloses.Add(plantedCloses[^1] * ((i - 1) % 20 < 10 ? 1.01 : 0.99));
+var cycle = Enumerable.Range(0, plantedBars)
+    .Select(i => i % 20 == 0 ? SignalDirection.Bullish : i % 20 == 10 ? SignalDirection.Bearish : SignalDirection.Neutral)
+    .ToArray();
+var phase = Enumerable.Range(0, plantedBars).Select(i => (double?)(i % 20)).ToArray();
+var planted = new SnapshotTable(
+    "PLNT",
+    Enumerable.Range(0, plantedBars).Select(i => new DateTime(2020, 1, 1).AddDays(i)).ToList(),
+    plantedCloses,
+    [("PHASE", phase), ("FUTURE", phase)],
+    new Dictionary<string, SignalDirection[]> { ["CYCLE"] = cycle });
+var patternReport = PatternAnalyzer.Analyze([planted], new PatternOptions(Horizon: 10, MinSamples: 10),
+    excludeColumns: new HashSet<string> { "FUTURE" });
+
+var bullTop = patternReport.BullishEdges.FirstOrDefault(p => p.Label == "CYCLE is Bullish");
+var bearTop = patternReport.BearishEdges.FirstOrDefault(p => p.Label == "CYCLE is Bearish");
+Check(bullTop is { Edge: > 0.05, WinRate: 1, HoldsOutOfSample: true },
+    "planted bullish pattern not found or did not hold out of sample");
+Check(bearTop is { Edge: < -0.05, WinRate: 0, HoldsOutOfSample: true },
+    "planted bearish pattern not found or did not hold out of sample");
+Check(bullTop is not null && Math.Abs(bullTop.AvgReturn - (Math.Pow(1.01, 10) - 1)) < 1e-9,
+    $"planted bullish forward return {bullTop?.AvgReturn}, expected {Math.Pow(1.01, 10) - 1}");
+Check(patternReport.ColumnStudies.Any(c => c.Column == "PHASE")
+      && patternReport.ColumnStudies.All(c => c.Column != "FUTURE")
+      && patternReport.Excluded.SequenceEqual(["FUTURE"]),
+    "excluded column still analyzed or not reported");
+Check(patternReport.Baseline.Samples + patternReport.OosBaseline.Samples == plantedBars - 10,
+    "forward returns must exclude the last Horizon bars");
+Check(patternReport.Baseline.Samples == 413, $"train split has {patternReport.Baseline.Samples} bars, expected 413 (70% of 590)");
+Check(patternReport.ActiveNow.Count == 0 || patternReport.ActiveNow.All(p => p.ActiveIn.SequenceEqual(["PLNT"])),
+    "active-now patterns should name the ticker");
+Check(Throws(() => new PatternOptions(Horizon: 0).Validate()), "horizon 0 should be rejected");
+Check(Throws(() => new PatternOptions(TestFraction: 1).Validate()), "test fraction 1 should be rejected");
+
 if (failures == 0)
 {
     Console.WriteLine("All tests passed.");

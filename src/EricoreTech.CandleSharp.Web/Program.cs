@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IQuoteFeed, YahooFinanceClient>();
 builder.Services.AddSingleton<ISocialFeed, StockTwitsClient>();
 builder.Services.AddSingleton<ISocialRepository>(new JsonSocialStore(dataDir));
 builder.Services.AddSingleton<IAgentStateStore>(new JsonAgentStateStore(dataDir));
+builder.Services.AddSingleton<ISnapshotRepository>(new CsvSnapshotRepository(dataDir));
 builder.Services.AddSingleton<IPluginCatalog>(sp => new PluginCatalog(pluginsDir,
     error => sp.GetRequiredService<ILoggerFactory>().CreateLogger("Plugins")
         .LogWarning("plugin warning: {Error}", error)));
@@ -31,6 +32,7 @@ builder.Services.AddSingleton<SimulationService>();
 builder.Services.AddSingleton<SocialService>();
 builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<WatchService>();
+builder.Services.AddSingleton<PatternService>();
 
 var app = builder.Build();
 
@@ -243,6 +245,54 @@ app.MapGet("/api/screen", (AnalysisService analysis) =>
         }),
     }));
 
+// Pattern mining over the indicator snapshot journal. "tickers" is a comma list
+// to pool several; omitted, every saved dataset of the interval is pooled.
+app.MapGet("/api/patterns", (string? tickers, string? interval, int? horizon, int? minSamples,
+    double? test, int? top, PatternService patterns) =>
+{
+    try
+    {
+        var list = (tickers ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var options = new PatternOptions(
+            Horizon: horizon ?? 10, MinSamples: minSamples ?? 30, TestFraction: test ?? 0.3, Top: top ?? 10);
+        var r = patterns.Analyze(list, interval ?? "1d", options);
+        return Results.Ok(new
+        {
+            tickers = r.Tickers,
+            horizon = r.Options.Horizon,
+            minSamples = r.Options.MinSamples,
+            bars = r.Bars,
+            baseline = BaselineDto(r.Baseline),
+            oosBaseline = BaselineDto(r.OosBaseline),
+            tested = r.Tested,
+            notable = r.Notable,
+            notableChecked = r.NotableChecked,
+            notableHeld = r.NotableHeld,
+            chanceExpected = r.ChanceExpected,
+            excluded = r.Excluded,
+            bullish = r.BullishEdges.Select(PatternDto),
+            bearish = r.BearishEdges.Select(PatternDto),
+            activeNow = r.ActiveNow.Select(PatternDto),
+            columns = r.ColumnStudies.Select(c => new
+            {
+                column = c.Column,
+                relativeToClose = c.RelativeToClose,
+                correlation = c.Correlation,
+                oosCorrelation = c.OosCorrelation,
+                buckets = c.Buckets.Select(PatternDto),
+            }),
+        });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapGet("/report/{ticker}", (string ticker, string? interval, ReportService reports) =>
 {
     try
@@ -300,6 +350,25 @@ app.MapPost("/api/fetch", async (FetchRequest request, MarketDataService market)
 });
 
 app.Run();
+
+static object BaselineDto(BaselineStat b) => new { samples = b.Samples, avgReturn = b.AvgReturn, winRate = b.WinRate };
+
+static object PatternDto(PatternStat p) => new
+{
+    label = p.Label,
+    kind = p.Kind,
+    samples = p.Samples,
+    avgReturn = p.AvgReturn,
+    winRate = p.WinRate,
+    edge = p.Edge,
+    tScore = p.TScore,
+    oosSamples = p.OosSamples,
+    oosAvgReturn = p.OosAvgReturn,
+    oosWinRate = p.OosWinRate,
+    oosEdge = p.OosEdge,
+    holdsOutOfSample = p.HoldsOutOfSample,
+    activeIn = p.ActiveIn,
+};
 
 static object AgentReportDto(AgentReport report) => new
 {

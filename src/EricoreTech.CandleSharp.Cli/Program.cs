@@ -25,6 +25,7 @@ static async Task<int> RunAsync(string[] args)
     var simulation = new SimulationService(repository, dividendRepository);
     var social = new SocialService(socialRepository, socialFeed);
     var reports = new ReportService(analysis, market, simulation, social);
+    var patterns = new PatternService(repository, new CsvSnapshotRepository(repository.DataDirectory), catalog);
     var watch = new WatchService(repository, dividendRepository, socialRepository, catalog, new JsonAgentStateStore(repository.DataDirectory), feed);
 
     var command = positional[0];
@@ -49,6 +50,8 @@ static async Task<int> RunAsync(string[] args)
             "backtest" => RunBacktest(rest, opts, analysis, catalog),
             "watch" => await RunWatchAsync(rest, opts, watch, catalog),
             "report" => RunReport(rest, opts, reports, market),
+            "snapshot" => RunSnapshot(rest, opts, patterns, catalog),
+            "patterns" => RunPatterns(rest, opts, patterns, catalog),
             _ => Usage($"Unknown command: {command}"),
         };
     }
@@ -436,6 +439,104 @@ static int RunReport(List<string> rest, Dictionary<string, string> opts, ReportS
     return 0;
 }
 
+static int RunSnapshot(List<string> tickers, Dictionary<string, string> opts,
+    PatternService patterns, IPluginCatalog catalog)
+{
+    ReportPlugins(catalog);
+    var interval = opts.GetValueOrDefault("interval", "1d");
+    var results = tickers.Count == 0
+        ? patterns.RecordAll(opts.TryGetValue("interval", out var only) ? only : null)
+        : tickers.Select(t => patterns.Record(t, interval)).ToList();
+    if (results.Count == 0)
+    {
+        Console.WriteLine("No saved datasets to snapshot. Fetch some tickers first.");
+        return 0;
+    }
+    foreach (var r in results)
+        Console.WriteLine($"{r.Ticker,-8} {r.Interval,-4} {r.Bars,6} bars ({r.Added} new), {r.Indicators} indicators -> {r.Path}");
+    return 0;
+}
+
+static int RunPatterns(List<string> tickers, Dictionary<string, string> opts,
+    PatternService patterns, IPluginCatalog catalog)
+{
+    ReportPlugins(catalog);
+    var interval = opts.GetValueOrDefault("interval", "1d");
+    var options = new PatternOptions(
+        Horizon: int.Parse(opts.GetValueOrDefault("horizon", "10"), CultureInfo.InvariantCulture),
+        MinSamples: int.Parse(opts.GetValueOrDefault("min-samples", "30"), CultureInfo.InvariantCulture),
+        TestFraction: double.Parse(opts.GetValueOrDefault("test", "0.3"), CultureInfo.InvariantCulture),
+        Buckets: int.Parse(opts.GetValueOrDefault("buckets", "5"), CultureInfo.InvariantCulture),
+        Top: int.Parse(opts.GetValueOrDefault("top", "10"), CultureInfo.InvariantCulture),
+        IncludeCombos: opts.GetValueOrDefault("no-combos", "false") != "true");
+    var r = patterns.Analyze(tickers, interval, options);
+
+    Console.WriteLine();
+    Console.WriteLine($"Indicator patterns vs {options.Horizon}-bar forward return — {string.Join(", ", r.Tickers)} ({interval})");
+    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+        $"Discovery: {r.Baseline.Samples} bars, baseline {Pct(r.Baseline.AvgReturn)} avg, {r.Baseline.WinRate * 100:0}% up. " +
+        $"Held-out check: {r.OosBaseline.Samples} bars, baseline {Pct(r.OosBaseline.AvgReturn)} avg, {r.OosBaseline.WinRate * 100:0}% up."));
+    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+        $"{r.Tested} conditions with >= {options.MinSamples} samples; {r.Notable} notable (|t| >= 2) vs ~{r.ChanceExpected:0} expected by chance; " +
+        $"{r.NotableHeld} of {r.NotableChecked} checkable notable patterns kept their direction on held-out data."));
+
+    if (r.Excluded.Count > 0)
+        Console.WriteLine($"Excluded (uses future bars): {string.Join(", ", r.Excluded)}");
+
+    PrintPatternTable("BULLISH EDGES (stock did better than usual after these)", r.BullishEdges);
+    PrintPatternTable("BEARISH EDGES (stock did worse than usual after these)", r.BearishEdges);
+    PrintPatternTable("ACTIVE ON THE LATEST BAR", r.ActiveNow, showActive: r.Tickers.Count > 1);
+
+    Console.WriteLine();
+    Console.WriteLine("INDICATOR VALUES VS FORWARD RETURN (rank correlation; bucket = avg forward return, low -> high)");
+    foreach (var study in r.ColumnStudies.OrderByDescending(c => Math.Abs(c.Correlation ?? 0)))
+    {
+        var name = study.RelativeToClose ? $"{study.Column} vs close" : study.Column;
+        var buckets = string.Join(" ", study.Buckets.Select(b => b.Samples == 0
+            ? "     -"
+            : Pct(b.AvgReturn, 1).PadLeft(6)));
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"  {name,-26} rho {Corr(study.Correlation),6} (held-out {Corr(study.OosCorrelation),6})  {buckets}"));
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Edge = avg forward return minus baseline; t counts only non-overlapping windows. Held = same edge sign on");
+    Console.WriteLine("the held-out recent data. Many conditions are tested, so trust patterns that are notable AND held.");
+    Console.WriteLine("Historical pattern statistics — not financial advice.");
+    return 0;
+
+    static string Corr(double? v) => v is { } x ? x.ToString("+0.00;-0.00", CultureInfo.InvariantCulture) : "n/a";
+}
+
+static void PrintPatternTable(string title, IReadOnlyList<PatternStat> rows, bool showActive = false)
+{
+    Console.WriteLine();
+    Console.WriteLine(title);
+    if (rows.Count == 0)
+    {
+        Console.WriteLine("  (none with enough samples)");
+        return;
+    }
+    Console.WriteLine($"  {"Condition",-58} {"N",5} {"Avg",7} {"Win",5} {"Edge",7} {"t",5}  {"Held-out",-18}");
+    foreach (var p in rows)
+    {
+        var label = p.Label.Length > 58 ? p.Label[..55] + "..." : p.Label;
+        var oos = p.HoldsOutOfSample is { } holds
+            ? string.Create(CultureInfo.InvariantCulture, $"{(holds ? "held" : "FAILED")} {Pct(p.OosEdge!.Value)} n={p.OosSamples}")
+            : $"n/a (n={p.OosSamples})";
+        var active = showActive ? $"  now: {string.Join(",", p.ActiveIn)}" : "";
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"  {label,-58} {p.Samples,5} {Pct(p.AvgReturn),7} {$"{p.WinRate * 100:0}%",5} {Pct(p.Edge),7} {Math.Round(p.TScore, 1),5:+0.0;-0.0;0.0}  {oos}{active}"));
+    }
+}
+
+// Rounds before formatting so tiny negatives don't render as "-+0.00%".
+static string Pct(double value, int decimals = 2)
+{
+    var digits = new string('0', decimals);
+    return Math.Round(value, decimals + 2).ToString($"+0.{digits}%;-0.{digits}%;0.{digits}%", CultureInfo.InvariantCulture);
+}
+
 static void PrintFullReport(TickerReport r)
 {
     var line = new string('=', 72);
@@ -622,6 +723,9 @@ static int Usage(string? error = null)
           candlesharp watch [TICKER...] [--interval 1d] [--fetch]
           candlesharp backtest <TICKER> [--interval 1d] [--warmup 60] [--horizon 10] [--step 5]
           candlesharp report [TICKER] [--interval 1d] [--amount 10000]
+          candlesharp snapshot [TICKER...] [--interval 1d]
+          candlesharp patterns [TICKER...] [--interval 1d] [--horizon 10] [--min-samples 30]
+                               [--test 0.3] [--buckets 5] [--top 10] [--no-combos]
 
         Global options:
           --data-dir <dir>   Directory for local CSV files (default: ./data)
@@ -634,6 +738,7 @@ static int Usage(string? error = null)
           candlesharp indicators AAPL
           candlesharp signals AAPL
           candlesharp verdict AAPL
+          candlesharp patterns AAPL --horizon 20
         """);
     return error is null ? 0 : 2;
 }

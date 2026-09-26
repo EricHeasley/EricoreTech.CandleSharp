@@ -141,6 +141,44 @@
     <div id="analysts" class="analysts"></div>
   </section>
 
+  <section class="card" id="patterns-card" hidden>
+    <div class="card-head">
+      <h2>Indicator patterns</h2>
+      <span class="tagline">stored indicator snapshots vs how the stock performed afterwards</span>
+    </div>
+    <form id="patterns-form" class="simulator-form">
+      <label class="field">
+        <span>Look ahead (bars)</span>
+        <input id="pat-horizon" type="number" min="1" step="1" value="10">
+      </label>
+      <label class="field">
+        <span>Min samples</span>
+        <input id="pat-min" type="number" min="2" step="1" value="30">
+      </label>
+      <label class="field inline">
+        <input id="pat-all" type="checkbox">
+        <span>Pool every saved ticker</span>
+      </label>
+      <button type="submit" id="pat-btn">Find patterns</button>
+    </form>
+    <p class="pat-summary" id="pat-summary" hidden></p>
+    <div id="pat-results" hidden>
+      <h3>Active on the latest bar</h3>
+      <div class="table-scroll"><table id="pat-active"></table></div>
+      <h3>Bullish edges — the stock did better than usual after these</h3>
+      <div class="table-scroll"><table id="pat-bullish"></table></div>
+      <h3>Bearish edges — the stock did worse than usual after these</h3>
+      <div class="table-scroll"><table id="pat-bearish"></table></div>
+      <details>
+        <summary>Indicator values vs forward return (rank correlation and average return by bucket, low → high)</summary>
+        <div class="table-scroll"><table id="pat-columns"></table></div>
+      </details>
+      <p class="pat-note">Edge = average forward return minus the baseline. t counts only non-overlapping windows.
+        "Held-out" re-checks each pattern on the most recent 30% of history, which played no part in finding it.
+        Many conditions are tested, so trust patterns that are notable (|t| ≥ 2) <em>and</em> held. Not financial advice.</p>
+    </div>
+  </section>
+
   <section class="card" id="signals-card" hidden>
     <div class="card-head"><h2>Signals</h2></div>
     <div id="stances" class="stances" aria-label="Current stance per indicator"></div>
