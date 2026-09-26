@@ -609,6 +609,8 @@ static int RunRule(List<string> rest, Dictionary<string, string> opts, RuleServi
             }
             Console.WriteLine($"Removed rule {rest[1]}.");
             return 0;
+        case "suggest" when rest.Count == 2:
+            return RunRuleSuggest(rest[1], interval, opts, rules);
         case "fields" when rest.Count == 2:
             var operands = rules.Operands(rest[1], interval);
             Console.WriteLine("Values (compare with <, <=, >, >=, crosses above, crosses below):");
@@ -618,8 +620,52 @@ static int RunRule(List<string> rest, Dictionary<string, string> opts, RuleServi
             Console.WriteLine("Add \"vs close\" to a price level to compare its distance from the close, e.g. \"SMA_50 vs close < -5%\".");
             return 0;
         default:
-            return Usage("rule needs: add <TICKER|*> <buy|sell> \"<condition>\"..., remove <id>, or fields <TICKER>");
+            return Usage("rule needs: add <TICKER|*> <buy|sell> \"<condition>\"..., suggest <TICKER>, remove <id>, or fields <TICKER>");
     }
+}
+
+static int RunRuleSuggest(string ticker, string interval, Dictionary<string, string> opts, RuleService rules)
+{
+    var options = new SuggestOptions(
+        Horizon: int.Parse(opts.GetValueOrDefault("horizon", "10"), CultureInfo.InvariantCulture),
+        MinSignals: int.Parse(opts.GetValueOrDefault("min-signals", "8"), CultureInfo.InvariantCulture),
+        Top: int.Parse(opts.GetValueOrDefault("top", "5"), CultureInfo.InvariantCulture));
+    var r = rules.Suggest(ticker, interval, options);
+
+    Console.WriteLine($"Suggested rules for {r.Ticker} ({interval}), from its own past {options.Horizon}-bar performance");
+    Console.WriteLine($"Chosen from {r.Tested} candidate rules on history up to {r.DiscoveryEnd:yyyy-MM-dd}, then re-checked on the recent part it never saw.");
+    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+        $"With that many tried, a t around {r.LuckBar:0.0} can happen by luck: STRONG = beats that AND held up clearly on recent data."));
+    if (r.Buy.Concat(r.Sell).All(s => s.Strength == SuggestionStrength.Weak))
+        Console.WriteLine("No strong rules: this stock's past doesn't show patterns that clearly beat luck. The weak ones below may be noise.");
+    foreach (var (title, list) in new[] { ("BUY RULES", r.Buy), ("SELL RULES", r.Sell) })
+    {
+        Console.WriteLine();
+        Console.WriteLine(title);
+        if (list.Count == 0)
+        {
+            Console.WriteLine("  (none held up — try another --horizon, or more history)");
+            continue;
+        }
+        foreach (var s in list)
+        {
+            var check = s.HeldUp switch
+            {
+                true => string.Create(CultureInfo.InvariantCulture,
+                    $"recent: held up ({s.Recent!.Signals} signals, {s.Recent.HitRate * 100:0}% right, edge {Pct(s.Recent.Edge)})"),
+                _ => $"recent: too few signals to check ({s.Recent?.Signals ?? 0})",
+            };
+            Console.WriteLine($"  [{s.Strength.ToString().ToUpperInvariant()}] {(s.FiringNow ? "FIRING NOW  " : "")}when {string.Join(" AND ", s.Rule.Conditions)}");
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    past: {s.Discovery.Signals} signals, {s.Discovery.HitRate * 100:0}% right, avg move {Pct(s.Discovery.AvgReturn)}, edge {Pct(s.Discovery.Edge)}, t {s.Discovery.TScore:0.0}; {check}"));
+            Console.WriteLine($"    save: candlesharp rule add {r.Ticker} {s.Rule.Action.ToString().ToLowerInvariant()} " +
+                string.Join(" ", s.Rule.Conditions.Select(c => $"\"{c}\"")) +
+                (options.Horizon != 10 ? $" --horizon {options.Horizon}" : ""));
+        }
+    }
+    Console.WriteLine();
+    Console.WriteLine("Found by searching many rules, so some luck is baked in even after the recent check. Not financial advice.");
+    return 0;
 }
 
 static void PrintFullReport(TickerReport r)
@@ -814,6 +860,7 @@ static int Usage(string? error = null)
           candlesharp rules [TICKER] [--interval 1d]
           candlesharp rule add <TICKER|*> <buy|sell> "<condition>"... [--name "..."] [--horizon 10]
           candlesharp rule remove <ID>
+          candlesharp rule suggest <TICKER> [--horizon 10] [--min-signals 8] [--top 5]
           candlesharp rule fields <TICKER>
 
         Global options:

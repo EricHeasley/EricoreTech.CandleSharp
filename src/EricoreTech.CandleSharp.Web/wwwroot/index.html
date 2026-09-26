@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CandleSharp</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='6' width='3' height='7' fill='%232a78d6'/%3E%3Crect x='7' y='3' width='3' height='10' fill='%230ca30c'/%3E%3Crect x='12' y='8' width='3' height='5' fill='%23eb6834'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="app.css?v=rules">
+<link rel="stylesheet" href="app.css?v=suggest">
 </head>
 <body>
 <header class="topbar">
@@ -74,6 +74,31 @@
       <span class="tagline">"when these are all true, it's a buy" — checked against this stock's history</span>
     </div>
     <div id="rule-list" class="rule-list"></div>
+    <div class="suggest-bar">
+      <button type="button" id="suggest-btn" class="primary">✨ Suggest rules from past performance</button>
+      <label class="field inline">
+        <span>judged over</span>
+        <input id="suggest-horizon" type="number" min="1" step="1" value="10" aria-label="Look-ahead bars">
+        <span>bars</span>
+      </label>
+      <span id="suggest-status" class="status"></span>
+    </div>
+    <div id="suggestions" class="suggestions" hidden>
+      <p class="pat-summary" id="suggest-summary"></p>
+      <div class="suggest-cols">
+        <div>
+          <h3>Buy rules</h3>
+          <div id="suggest-buy" class="rule-list"></div>
+        </div>
+        <div>
+          <h3>Sell rules</h3>
+          <div id="suggest-sell" class="rule-list"></div>
+        </div>
+      </div>
+      <p class="pat-note">Each rule was picked on older history, then re-checked on the most recent 30% it never saw.
+        <b>Strong</b> = better than luck could explain after trying this many rules, <em>and</em> clearly held up recently.
+        <b>Promising</b> = one of the two. <b>Weak</b> = could easily be luck. Past results don't guarantee future ones.</p>
+    </div>
     <details id="rule-builder" class="rule-builder">
       <summary>＋ New rule</summary>
       <form id="rule-form">
@@ -256,6 +281,6 @@
   </section>
 </main>
 
-<script src="app.js?v=rules"></script>
+<script src="app.js?v=suggest"></script>
 </body>
 </html>

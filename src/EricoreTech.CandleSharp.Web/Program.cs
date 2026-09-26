@@ -326,6 +326,33 @@ app.MapGet("/api/rules/{ticker}/operands", (string ticker, string? interval, Rul
     }
 });
 
+app.MapGet("/api/rules/{ticker}/suggest", (string ticker, string? interval, int? horizon, int? minSignals, int? top, RuleService rules) =>
+{
+    try
+    {
+        var r = rules.Suggest(ticker, interval ?? "1d",
+            new SuggestOptions(Horizon: horizon ?? 10, MinSignals: minSignals ?? 8, Top: top ?? 5));
+        return Results.Ok(new
+        {
+            ticker = r.Ticker,
+            horizon = r.Options.Horizon,
+            discoveryEnd = r.DiscoveryEnd,
+            tested = r.Tested,
+            luckBar = r.LuckBar,
+            buy = r.Buy.Select(SuggestionDto),
+            sell = r.Sell.Select(SuggestionDto),
+        });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapPost("/api/rules", (RuleRequest request, RuleService rules) =>
 {
     try
@@ -431,6 +458,25 @@ static object RuleDto(TradeRule r) => new
     action = r.Action.ToString(),
     conditions = r.Conditions,
     horizon = r.Horizon,
+};
+
+static object SignalStatsDto(SignalStats s) => new
+{
+    signals = s.Signals,
+    avgReturn = s.AvgReturn,
+    hitRate = s.HitRate,
+    edge = s.Edge,
+    tScore = s.TScore,
+};
+
+static object SuggestionDto(RuleSuggestion s) => new
+{
+    rule = RuleDto(s.Rule),
+    discovery = SignalStatsDto(s.Discovery),
+    recent = s.Recent is { } recent ? SignalStatsDto(recent) : null,
+    heldUp = s.HeldUp,
+    firingNow = s.FiringNow,
+    strength = s.Strength.ToString(),
 };
 
 static object RuleResultDto(RuleResult r) => new

@@ -760,6 +760,32 @@ var phaseBucket = patternReport.ColumnStudies.First(c => c.Column == "PHASE").Bu
 Check(phaseBucket.RuleConditions is [var only] && only.StartsWith("PHASE < "),
     $"bottom bucket rule: {string.Join(" & ", phaseBucket.RuleConditions ?? [])}");
 
+// --- RuleSuggester: finds the planted rule, grades it Strong, and it re-scores the same when saved ---
+var suggestData = new RuleData(swingCandles, new EngineResult(
+    [("PHASE", phase)], [], new Dictionary<string, SignalDirection[]> { ["CYCLE"] = cycle }));
+var suggestions = RuleSuggester.Suggest("plnt", suggestData, new SuggestOptions(Horizon: 10, MinSignals: 5));
+var topBuy = suggestions.Buy.FirstOrDefault();
+var topSell = suggestions.Sell.FirstOrDefault();
+Check(topBuy is { Strength: SuggestionStrength.Strong, HeldUp: true } && topBuy.Rule.Action == RuleAction.Buy,
+    $"top buy suggestion should be Strong and held up, got {topBuy?.Strength} / {topBuy?.HeldUp}");
+Check(topSell is { Strength: SuggestionStrength.Strong } && topSell.Rule.Action == RuleAction.Sell,
+    $"top sell suggestion should be Strong, got {topSell?.Strength}");
+Check(topBuy is not null && topBuy.Discovery.HitRate == 1 && topBuy.Rule.Ticker == "PLNT",
+    $"planted buy rule should have been right every time, got {topBuy?.Discovery.HitRate}");
+Check(suggestions.Tested > 0 && suggestions.LuckBar > 1, "suggestion report should say how many rules were tried");
+if (topBuy is not null)
+{
+    // A saved suggestion must be a valid rule and fire on exactly the bars it was scored on.
+    var rescored = RuleEvaluator.Evaluate(topBuy.Rule, "PLNT", suggestData);
+    Check(rescored.Error is null && rescored.HitRate == 1, $"suggested rule re-scored differently: {rescored.HitRate}");
+    Check(topBuy.Rule.Conditions.All(c => RuleCondition.Parse(c).Text == c), "suggested condition text must round-trip");
+}
+Check(ThrowsOf<InvalidOperationException>(() =>
+        RuleSuggester.Suggest("SHORT", new RuleData(swingCandles.Take(40).ToList(), new EngineResult([], [], new Dictionary<string, SignalDirection[]>())))),
+    "too little history should be refused");
+Check(ThrowsOf<ArgumentOutOfRangeException>(() => new SuggestOptions(TestFraction: 0).Validate()),
+    "suggestions need a recent period to check against");
+
 if (failures == 0)
 {
     Console.WriteLine("All tests passed.");
