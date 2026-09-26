@@ -1,0 +1,552 @@
+@using System.Globalization
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<section class="card">
+    <div class="card-head">
+        <h2>@Series.Ticker <span class="chart-hint">@Series.Interval &middot; @Candles[_from].Timestamp.ToString("yyyy-MM-dd") – @Candles[_to - 1].Timestamp.ToString("yyyy-MM-dd")</span></h2>
+        <div class="legend">
+            @foreach (var overlay in Overlays)
+            {
+                if (ColumnByName(overlay.Columns[0]) is null) continue;
+                <label>
+                    <input type="checkbox" checked="@_activeOverlays.Contains(overlay.Id)" @onchange="() => ToggleOverlay(overlay.Id)" />
+                    <span class="key" style="border-top-color:var(@overlay.CssVar)"></span>@overlay.Label
+                </label>
+            }
+        </div>
+    </div>
+
+    <div class="chart-toolbar">
+        <div class="range-presets" role="group" aria-label="Date range">
+            <button type="button" class="@(_rangeBars == 63 ? "selected" : "")" @onclick="() => SetRange(63)">3M</button>
+            <button type="button" class="@(_rangeBars == 126 ? "selected" : "")" @onclick="() => SetRange(126)">6M</button>
+            <button type="button" class="@(_rangeBars == 252 ? "selected" : "")" @onclick="() => SetRange(252)">1Y</button>
+            <button type="button" class="@(_rangeBars < 0 ? "selected" : "")" @onclick="() => SetRange(-1)">All</button>
+        </div>
+        <button type="button" class="zoom-btn" title="Zoom in" @onclick="() => Zoom(1 / 1.4)">＋</button>
+        <button type="button" class="zoom-btn" title="Zoom out" @onclick="() => Zoom(1.4)">－</button>
+        <label class="chip-toggle">
+            <input type="checkbox" @bind="_showTriggers" /> Trigger markers
+        </label>
+        @if (Rules is { Count: > 0 })
+        {
+            <label class="field marker-select">
+                <span>Show rule signals</span>
+                <select @bind="_markerRuleId">
+                    <option value="">(none)</option>
+                    @foreach (var r in Rules)
+                    {
+                        <option value="@r.Rule.Id">@r.Rule.Name</option>
+                    }
+                </select>
+            </label>
+        }
+        <span class="spacer"></span>
+        <span class="chart-hint">scroll to zoom &middot; drag to pan &middot; double-click to reset</span>
+    </div>
+
+    <div class="chart-wrap" @ref="_wrapRef"
+         @onwheel="OnWheel" @onwheel:preventDefault="true"
+         @onmousedown="OnMouseDown" @onmousemove="OnMouseMove" @onmouseup="OnMouseUp"
+         @onmouseleave="OnMouseLeave" @ondblclick="ResetView">
+        <svg class="interactive-chart" viewBox="0 0 @W @H" role="img" aria-label="Price chart">
+            @* gridlines *@
+            @foreach (var tick in NiceTicks(_lo, _hi, 5))
+            {
+                <line x1="@PadLeft" x2="@(W - PadRight)" y1="@Y(tick).ToString(Inv)" y2="@Y(tick).ToString(Inv)" class="gridline" />
+                <SvgLabel X="@(W - PadRight + 6)" Y="@(Y(tick) + 4)" Text="@(tick.ToString(tick >= 1000 ? "0" : "0.##"))" />
+            }
+            @* x-axis date labels *@
+            @foreach (var i in XTicks())
+            {
+                <SvgLabel X="@Math.Max(X(i), 36)" Y="@(H - 8)" Anchor="middle" Text="@(Candles[i].Timestamp.ToString("yyyy-MM-dd"))" />
+            }
+
+            @* bands (Bollinger / Donchian) under everything *@
+            @foreach (var overlay in Overlays.Where(o => o.Band && _activeOverlays.Contains(o.Id)))
+            {
+                var upper = ColumnByName(overlay.Columns[0]);
+                var lower = ColumnByName(overlay.Columns[1]);
+                var band = BandPath(upper, lower);
+                if (band is not null)
+                {
+                    <path d="@band" fill="@("var(" + overlay.FillVar + ")")" stroke="none" />
+                }
+                foreach (var name in overlay.Columns.Take(2))
+                {
+                    var d = PathFor(ColumnByName(name));
+                    if (d is not null)
+                    {
+                        <path d="@d" fill="none" stroke="@("var(" + overlay.CssVar + ")")" stroke-width="1" stroke-dasharray="4 3" />
+                    }
+                }
+            }
+
+            @* candles *@
+            @for (int i = _from; i < _to; i++)
+            {
+                var c = Candles[i];
+                var cls = c.Close >= c.Open ? "candle-up" : "candle-down";
+                var top = Y(Math.Max(c.Open, c.Close));
+                var bottom = Y(Math.Min(c.Open, c.Close));
+                <line x1="@X(i).ToString(Inv)" x2="@X(i).ToString(Inv)" y1="@Y(c.High).ToString(Inv)" y2="@Y(c.Low).ToString(Inv)" class="@cls" stroke-width="1" />
+                <rect x="@((X(i) - _bodyW / 2).ToString(Inv))" y="@top.ToString(Inv)" width="@_bodyW.ToString(Inv)" height="@Math.Max(1, bottom - top).ToString(Inv)" class="@cls" rx="@(_bodyW > 3 ? 1 : 0)" />
+            }
+
+            @* overlay lines / dots *@
+            @foreach (var overlay in Overlays.Where(o => !o.Band && _activeOverlays.Contains(o.Id)))
+            {
+                var values = ColumnByName(overlay.Columns[0]);
+                if (values is null) { continue; }
+                if (overlay.Dots)
+                {
+                    for (int i = _from; i < _to; i++)
+                    {
+                        if (values[i] is { } v)
+                        {
+                            <circle cx="@X(i).ToString(Inv)" cy="@Y(v).ToString(Inv)" r="1.8" fill="@("var(" + overlay.CssVar + ")")" />
+                        }
+                    }
+                }
+                else
+                {
+                    var d = PathFor(values);
+                    if (d is not null)
+                    {
+                        <path d="@d" fill="none" stroke="@("var(" + overlay.CssVar + ")")" stroke-width="2" />
+                    }
+                }
+            }
+
+            @* indicator trigger markers (opt in — every indicator at once gets noisy) *@
+            @if (_showTriggers)
+            {
+                @foreach (var (i, bull, index) in TriggerMarkers())
+                {
+                    var c = Candles[i];
+                    var size = 5.0;
+                    if (bull)
+                    {
+                        var cy = Y(c.Low) + 8 + index * 11;
+                        <path d="@($"M {X(i).ToString(Inv)} {cy.ToString(Inv)} l {size.ToString(Inv)} {(size * 1.5).ToString(Inv)} l {(-size * 2).ToString(Inv)} 0 Z")" class="marker-bullish" />
+                    }
+                    else
+                    {
+                        var cy = Y(c.High) - 8 - index * 11;
+                        <path d="@($"M {X(i).ToString(Inv)} {cy.ToString(Inv)} l {size.ToString(Inv)} {(-size * 1.5).ToString(Inv)} l {(-size * 2).ToString(Inv)} 0 Z")" class="marker-bearish" />
+                    }
+                }
+            }
+
+            @* rule signal markers: green = worked out, red = didn't, grey = too soon to tell *@
+            @if (_selectedRule is not null)
+            {
+                @foreach (var s in _selectedRule.Signals)
+                {
+                    int i = IndexOf(s.Timestamp);
+                    if (i < _from || i >= _to) continue;
+                    var c = Candles[i];
+                    bool buy = _selectedRule.Rule.Action == RuleAction.Buy;
+                    string cls = s.ForwardReturn is not { } fr ? "marker-pending" : (buy ? fr > 0 : fr < 0) ? "marker-good" : "marker-bad";
+                    var cy = buy ? Y(c.Low) + 20 : Y(c.High) - 20;
+                    <circle cx="@X(i).ToString(Inv)" cy="@cy.ToString(Inv)" r="4.5" class="@cls">
+                        <title>@s.Timestamp.ToString("yyyy-MM-dd"): @(s.ForwardReturn is { } r2 ? $"{r2 * 100:+0.0;-0.0}%" : "pending")</title>
+                    </circle>
+                }
+            }
+
+            @* highlight line (click a trigger row below to jump here) *@
+            @if (_highlightIndex is { } hi2 && hi2 >= _from && hi2 < _to)
+            {
+                <line x1="@X(hi2).ToString(Inv)" x2="@X(hi2).ToString(Inv)" y1="@PadTop" y2="@(H - PadBottom)" class="chart-highlight" />
+            }
+
+            @* crosshair *@
+            @if (_hoverIndex is { } hover)
+            {
+                <line x1="@X(hover).ToString(Inv)" x2="@X(hover).ToString(Inv)" y1="@PadTop" y2="@(H - PadBottom)" class="crosshair" />
+            }
+        </svg>
+
+        @if (_hoverIndex is { } hi3)
+        {
+            <div class="tooltip" style="left:@(TooltipLeft(hi3))px; top:12px;">
+                <div class="tt-date">@Candles[hi3].Timestamp.ToString("yyyy-MM-dd")</div>
+                <table>
+                    <tr><td class="tt-name">Open</td><td class="tt-val">@Candles[hi3].Open.ToString("0.00")</td></tr>
+                    <tr><td class="tt-name">High</td><td class="tt-val">@Candles[hi3].High.ToString("0.00")</td></tr>
+                    <tr><td class="tt-name">Low</td><td class="tt-val">@Candles[hi3].Low.ToString("0.00")</td></tr>
+                    <tr><td class="tt-name">Close</td><td class="tt-val">@Candles[hi3].Close.ToString("0.00")</td></tr>
+                    <tr><td class="tt-name">Volume</td><td class="tt-val">@Candles[hi3].Volume.ToString("N0")</td></tr>
+                    @foreach (var overlay in Overlays.Where(o => !o.Band && _activeOverlays.Contains(o.Id)))
+                    {
+                        var values = ColumnByName(overlay.Columns[0]);
+                        <tr>
+                            <td class="tt-name"><span class="key" style="border-top-color:var(@overlay.CssVar)"></span>@overlay.Label</td>
+                            <td class="tt-val">@(values?[hi3] is { } v ? v.ToString("0.00") : "–")</td>
+                        </tr>
+                    }
+                </table>
+            </div>
+        }
+    </div>
+
+    @if (RsiValues is not null)
+    {
+        <div class="chart-wrap" style="margin-top:10px">
+            <svg viewBox="0 0 @W @RsiH" role="img" aria-label="RSI chart">
+                @foreach (var guide in new[] { 30.0, 70.0 })
+                {
+                    <line x1="@PadLeft" x2="@(W - PadRight)" y1="@RsiY(guide).ToString(Inv)" y2="@RsiY(guide).ToString(Inv)" class="rsi-guide" />
+                    <SvgLabel X="@(W - PadRight + 6)" Y="@(RsiY(guide) + 4)" Text="@(guide.ToString("0"))" />
+                }
+                @{ var rsiPath = PathFor(RsiValues, RsiY); }
+                @if (rsiPath is not null)
+                {
+                    <path d="@rsiPath" class="rsi-line" />
+                }
+            </svg>
+        </div>
+    }
+
+    @if (RecentTriggers.Count > 0)
+    {
+        <details open class="triggers-mini">
+            <summary>Recent triggers <span class="chart-hint">(click a row to mark it on the chart)</span></summary>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Date</th><th>Indicator</th><th>Direction</th></tr></thead>
+                    <tbody>
+                        @foreach (var t in RecentTriggers)
+                        {
+                            <tr class="clickable-row @(_highlightIndex == IndexOf(t.Timestamp) ? "row-selected" : "")" @onclick="() => JumpTo(t.Timestamp)">
+                                <td>@t.Timestamp.ToString("yyyy-MM-dd")</td>
+                                <td>@t.Indicator</td>
+                                <td class="dir-@(t.Direction.ToString().ToLowerInvariant())">@(t.Direction == SignalDirection.Bullish ? "▲" : "▼") @t.Direction</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    }
+</section>
+
+@code {
+    private const int W = 960, H = 420, RsiH = 140;
+    private const int PadLeft = 8, PadRight = 64, PadTop = 16, PadBottom = 28;
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+    [Parameter, EditorRequired] public SeriesAnalysis Series { get; set; } = null!;
+    [Parameter] public IReadOnlyList<RuleResult>? Rules { get; set; }
+
+    private static readonly OverlayDef[] Overlays =
+    [
+        new("sma20", "SMA 20", ["SMA_20"], "--s1", false, null, false),
+        new("sma50", "SMA 50", ["SMA_50"], "--s2", false, null, false),
+        new("ema12", "EMA 12", ["EMA_12"], "--s3", false, null, false),
+        new("ema26", "EMA 26", ["EMA_26"], "--s4", false, null, false),
+        new("st", "SuperTrend", ["SUPERTREND"], "--s5", false, null, false),
+        new("psar", "PSAR", ["PSAR"], "--muted", false, null, true),
+        new("bb", "BB 20", ["BB_upper_20", "BB_lower_20"], "--muted", true, "--bb-fill", false),
+        new("dc", "Donchian 20", ["DONCHIAN_upper_20", "DONCHIAN_lower_20"], "--muted", true, "--dc-fill", false),
+    ];
+
+    private readonly HashSet<string> _activeOverlays = new(StringComparer.Ordinal) { "sma20", "sma50" };
+    private int _rangeBars = 252;
+    private int _pan;
+    private bool _showTriggers;
+    private string _markerRuleId = "";
+    private int? _hoverIndex;
+    private int? _highlightIndex;
+    private bool _dragging;
+    private double _dragStartClientX;
+    private int _dragStartPan;
+    private DateTime _lastMouseEventAt = DateTime.MinValue;
+
+    private ElementReference _wrapRef;
+    private IJSObjectReference? _resizeHandle;
+    private DotNetObjectReference<PriceChart>? _selfRef;
+    private double _containerWidth = W;
+    private double _containerLeft;
+
+    private IReadOnlyList<Candle> Candles => Series.Candles;
+    private int _from, _to;
+    private double _lo, _hi;
+    private double _slotW, _bodyW;
+
+    private RuleResult? _selectedRule => Rules?.FirstOrDefault(r => r.Rule.Id == _markerRuleId);
+
+    private double?[]? RsiValues => ColumnByName("RSI_14");
+
+    private IReadOnlyList<Trigger> RecentTriggers => Series.Signals.Triggers.TakeLast(8).Reverse().ToList();
+
+    private string? _lastTicker;
+
+    protected override void OnParametersSet()
+    {
+        if (Series.Ticker != _lastTicker)
+        {
+            _lastTicker = Series.Ticker;
+            _highlightIndex = null;
+            _hoverIndex = null;
+            _dragging = false;
+            _markerRuleId = "";
+        }
+        Layout();
+    }
+
+    private void Layout()
+    {
+        int total = Candles.Count;
+        int shown = Math.Clamp(_rangeBars < 0 ? total : _rangeBars, 1, total);
+        int maxPan = Math.Max(0, total - shown);
+        _pan = Math.Clamp(_pan, 0, maxPan);
+        _to = total - _pan;
+        _from = _to - shown;
+
+        double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+        for (int i = _from; i < _to; i++)
+        {
+            lo = Math.Min(lo, Candles[i].Low);
+            hi = Math.Max(hi, Candles[i].High);
+        }
+        foreach (var overlay in Overlays.Where(o => _activeOverlays.Contains(o.Id)))
+            foreach (var name in overlay.Columns)
+            {
+                var values = ColumnByName(name);
+                if (values is null) continue;
+                for (int i = _from; i < _to; i++)
+                    if (values[i] is { } v) { lo = Math.Min(lo, v); hi = Math.Max(hi, v); }
+            }
+        if (double.IsInfinity(lo)) { lo = 0; hi = 1; }
+        double padY = (hi - lo) * 0.06;
+        if (padY <= 0) padY = 1;
+        _lo = lo - padY;
+        _hi = hi + padY;
+
+        _slotW = PlotW / (double)shown;
+        _bodyW = Math.Max(1.5, Math.Min(9, _slotW * 0.65));
+    }
+
+    private double PlotW => W - PadLeft - PadRight;
+    private double PlotH => H - PadTop - PadBottom;
+    private double X(int i) => PadLeft + (i - _from + 0.5) * PlotW / (_to - _from);
+    private double Y(double v) => PadTop + (_hi - v) * PlotH / (_hi - _lo == 0 ? 1 : _hi - _lo);
+    private double RsiY(double v) => 10 + (100 - v) * (RsiH - 34) / 100;
+
+    private double?[]? ColumnByName(string name) => Series.Signals.Columns.FirstOrDefault(c => c.Name == name).Values;
+
+    private int IndexOf(DateTime timestamp)
+    {
+        // Candles are sorted, so a binary search would do, but history is small enough this is fine.
+        for (int i = 0; i < Candles.Count; i++)
+            if (Candles[i].Timestamp == timestamp) return i;
+        return -1;
+    }
+
+    private string? PathFor(double?[]? values, Func<double, double>? yOverride = null)
+    {
+        if (values is null) return null;
+        var y = yOverride ?? Y;
+        var points = new List<(double x, double y)>();
+        for (int i = _from; i < _to; i++)
+            if (values[i] is { } v) points.Add((X(i), y(v)));
+        if (points.Count < 2) return null;
+        return "M " + string.Join(" L ", points.Select(p => $"{p.x.ToString("0.#", Inv)} {p.y.ToString("0.#", Inv)}"));
+    }
+
+    private string? BandPath(double?[]? upper, double?[]? lower)
+    {
+        var up = PathFor(upper);
+        if (up is null) return null;
+        var downPoints = new List<(double x, double y)>();
+        for (int i = _from; i < _to; i++)
+            if (lower?[i] is { } v) downPoints.Add((X(i), Y(v)));
+        if (downPoints.Count < 2) return null;
+        downPoints.Reverse();
+        var down = "L " + string.Join(" L ", downPoints.Select(p => $"{p.x.ToString("0.#", Inv)} {p.y.ToString("0.#", Inv)}"));
+        return $"{up} {down} Z";
+    }
+
+    private static IEnumerable<double> NiceTicks(double lo, double hi, int target)
+    {
+        double raw = (hi - lo) / target;
+        if (raw <= 0) yield break;
+        double mag = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+        double step = new[] { 1, 2, 2.5, 5, 10 }.Select(m => m * mag).FirstOrDefault(s => (hi - lo) / s <= target);
+        if (step <= 0) step = raw;
+        for (double v = Math.Ceiling(lo / step) * step; v <= hi; v += step) yield return v;
+    }
+
+    private IEnumerable<int> XTicks()
+    {
+        int count = _to - _from;
+        int step = Math.Max(1, count / 6);
+        for (int i = _from; i < _to; i += step) yield return i;
+    }
+
+    private IEnumerable<(int Index, bool Bullish, int Slot)> TriggerMarkers()
+    {
+        var bullCount = new Dictionary<int, int>();
+        var bearCount = new Dictionary<int, int>();
+        foreach (var trigger in Series.Signals.Triggers)
+        {
+            int i = IndexOf(trigger.Timestamp);
+            if (i < _from || i >= _to) continue;
+            if (trigger.Direction == SignalDirection.Bullish)
+            {
+                int slot = bullCount.GetValueOrDefault(i);
+                bullCount[i] = slot + 1;
+                yield return (i, true, slot);
+            }
+            else if (trigger.Direction == SignalDirection.Bearish)
+            {
+                int slot = bearCount.GetValueOrDefault(i);
+                bearCount[i] = slot + 1;
+                yield return (i, false, slot);
+            }
+        }
+    }
+
+    private double TooltipLeft(int index)
+    {
+        double fraction = X(index) / W;
+        return Math.Clamp(fraction * _containerWidth + 14, 8, Math.Max(8, _containerWidth - 190));
+    }
+
+    private void ToggleOverlay(string id)
+    {
+        if (!_activeOverlays.Add(id)) _activeOverlays.Remove(id);
+    }
+
+    private void SetRange(int bars)
+    {
+        _rangeBars = bars;
+        _pan = 0;
+        Layout();
+    }
+
+    private void Zoom(double factor)
+    {
+        int total = Candles.Count;
+        int current = _rangeBars < 0 ? total : _rangeBars;
+        _rangeBars = Math.Clamp((int)Math.Round(current * factor), 20, total);
+        Layout();
+    }
+
+    private void Pan(int deltaBars)
+    {
+        int total = Candles.Count;
+        int shown = _rangeBars < 0 ? total : _rangeBars;
+        _pan = Math.Clamp(_pan + deltaBars, 0, Math.Max(0, total - shown));
+        Layout();
+    }
+
+    private void ResetView()
+    {
+        _rangeBars = 252;
+        _pan = 0;
+        Layout();
+    }
+
+    private void JumpTo(DateTime timestamp)
+    {
+        int i = IndexOf(timestamp);
+        if (i < 0) return;
+        _highlightIndex = i;
+        if (i < _from || i >= _to)
+        {
+            int shown = _to - _from;
+            int newTo = Math.Min(Candles.Count, i + shown / 2 + 1);
+            _pan = Candles.Count - newTo;
+        }
+        Layout();
+    }
+
+    private void OnWheel(WheelEventArgs e) => Zoom(e.DeltaY > 0 ? 1.15 : 1 / 1.15);
+
+    private void OnMouseDown(MouseEventArgs e)
+    {
+        _dragging = true;
+        _dragStartClientX = e.ClientX;
+        _dragStartPan = _pan;
+    }
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        // ClientX is viewport-relative and well-defined no matter which nested SVG
+        // element the pointer is actually over; OffsetX is relative to that element
+        // instead (a candle rect, a path, ...) and isn't usable for this math.
+        double localX = e.ClientX - _containerLeft;
+
+        if (_dragging)
+        {
+            double barsPerPx = (_to - _from) / Math.Max(1.0, _containerWidth * PlotW / W);
+            int deltaBars = (int)Math.Round((e.ClientX - _dragStartClientX) * barsPerPx);
+            _pan = Math.Clamp(_dragStartPan + deltaBars, 0, Math.Max(0, Candles.Count - (_to - _from)));
+            Layout();
+            return;
+        }
+
+        // Throttle hover updates a little so a fast mouse doesn't flood the circuit.
+        var now = DateTime.UtcNow;
+        if ((now - _lastMouseEventAt).TotalMilliseconds < 25) return;
+        _lastMouseEventAt = now;
+
+        double px = localX * W / _containerWidth;
+        int count = _to - _from;
+        int i = Math.Max(_from, Math.Min(_to - 1, _from + (int)Math.Floor((px - PadLeft) / (PlotW / count))));
+        _hoverIndex = i;
+    }
+
+    private void OnMouseUp(MouseEventArgs e) => _dragging = false;
+
+    private void OnMouseLeave(MouseEventArgs e)
+    {
+        _dragging = false;
+        _hoverIndex = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var box = await JS.InvokeAsync<ClientBox>("candlesharp.box", _wrapRef);
+            ApplyBox(box);
+            _selfRef = DotNetObjectReference.Create(this);
+            _resizeHandle = await JS.InvokeAsync<IJSObjectReference>("candlesharp.observeResize", _wrapRef, _selfRef);
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void OnResized(ClientBox box)
+    {
+        ApplyBox(box);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyBox(ClientBox box)
+    {
+        _containerWidth = box.Width > 0 ? box.Width : W;
+        _containerLeft = box.Left;
+    }
+
+    public sealed record ClientBox(double Width, double Left, double Top);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_resizeHandle is not null)
+        {
+            try { await _resizeHandle.InvokeVoidAsync("dispose"); } catch (JSDisconnectedException) { }
+            await _resizeHandle.DisposeAsync();
+        }
+        _selfRef?.Dispose();
+    }
+
+    private sealed record OverlayDef(string Id, string Label, string[] Columns, string CssVar, bool Band, string? FillVar, bool Dots);
+}

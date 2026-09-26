@@ -1,0 +1,172 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+@inject MarketDataService Market
+@inject SimulationService Simulation
+@inject SocialService Social
+
+<section class="card">
+    <div class="card-head"><h2>Dividends</h2></div>
+    @{ var dividends = Market.GetDividendSummary(Ticker); }
+    @if (dividends.PaymentCount == 0)
+    {
+        <p class="empty">No dividend history stored.</p>
+    }
+    else
+    {
+        <p class="dividend-headline">
+            @(dividends.YieldPercent is { } y ? $"{y:0.0}% yield" : "Yield n/a") &middot;
+            @dividends.TrailingYearTotal.ToString("0.####") per share over the trailing year &middot;
+            @dividends.PaymentCount payments on record
+        </p>
+        <p class="dividend-growth">
+            Growth:
+            @(dividends.GrowthYoYPercent is { } g1 ? $"{g1:+0.0;-0.0}% YoY" : "YoY n/a")
+            @(dividends.Growth3YPercent is { } g3 ? $", {g3:+0.0;-0.0}%/yr over 3y" : "")
+            @(dividends.Growth5YPercent is { } g5 ? $", {g5:+0.0;-0.0}%/yr over 5y" : "")
+            &middot; @dividends.ConsecutiveGrowthYears consecutive growth year(s)
+        </p>
+        <div class="dividend-annuals">
+            @foreach (var a in dividends.AnnualTotals)
+            {
+                <span class="year">@a.Year <b>@a.Total.ToString("0.####")</b></span>
+            }
+        </div>
+        <details>
+            <summary>Recent payments</summary>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Date</th><th>Amount</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in dividends.RecentPayments.Reverse())
+                        {
+                            <tr><td>@p.Timestamp.ToString("yyyy-MM-dd")</td><td>@p.Amount.ToString("0.####")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    }
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <h2>Buy &amp; hold simulator</h2>
+        <span class="tagline">invest at the start date, hold, collect dividends &mdash; uses daily data</span>
+    </div>
+    <div class="simulator-form">
+        <label class="field"><span>Amount ($)</span><input type="number" min="1" step="any" @bind="_amount" /></label>
+        <label class="field"><span>Start (blank = 1y ago)</span><input type="date" @bind="_start" /></label>
+        <label class="field"><span>End (blank = latest)</span><input type="date" @bind="_end" /></label>
+        <button type="button" disabled="@_simBusy" @onclick="RunSimulation">Simulate</button>
+    </div>
+    @if (_simError is not null)
+    {
+        <p class="sim-headline loss">@_simError</p>
+    }
+    else if (_sim is { } r)
+    {
+        <p class="sim-headline @(r.TotalReturnPercent >= 0 ? "gain" : "loss")">
+            $@r.Invested.ToString("N2") &rarr; $@r.EndTotalValue.ToString("N2") (@r.TotalReturnPercent.ToString("+0.0;-0.0")%)
+        </p>
+        <ul class="verdict-details">
+            <li>Bought @r.Shares.ToString("0.####") shares on @r.BuyDate.ToString("yyyy-MM-dd") at $@r.BuyPrice.ToString("0.00"); held until @r.SellDate.ToString("yyyy-MM-dd") at $@r.SellPrice.ToString("0.00").</li>
+            <li>Stock value $@r.EndStockValue.ToString("N2") (@r.PriceReturnPercent.ToString("+0.0;-0.0")%) + dividends collected $@r.DividendCash.ToString("N2") over @r.DividendPayments payment(s) (@r.DividendYieldOnCostPercent.ToString("+0.0;-0.0")% on cost).</li>
+            <li>If every dividend had been reinvested: $@r.ReinvestedValue.ToString("N2") (@r.ReinvestedReturnPercent.ToString("+0.0;-0.0")%).</li>
+        </ul>
+    }
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <h2>Social buzz</h2>
+        <span class="tagline">what the crowd on StockTwits is saying</span>
+        <button type="button" class="social-pull" disabled="@_socialBusy" @onclick="PullSocial">Pull latest chatter</button>
+    </div>
+    @if (_socialStatus.Length > 0)
+    {
+        <p class="status @(_socialError ? "error" : "")">@_socialStatus</p>
+    }
+    @{ var social = Social.GetSummary(Ticker); }
+    @if (social.PostCount == 0)
+    {
+        <p class="social-headline">No posts stored yet &mdash; pull the latest chatter to see what the crowd thinks.</p>
+    }
+    else
+    {
+        <p class="social-headline">
+            @social.PostCount posts, @(social.BullishRatioPercent is { } ratio ? $"{Math.Round(ratio)}% bullish" : "no directional reads")
+            (tagged @social.TaggedBullish/@social.TaggedBearish, lexicon @social.LexiconBullish/@social.LexiconBearish),
+            newest @social.NewestPost?.ToString("yyyy-MM-dd")
+        </p>
+        <div class="social-posts">
+            @foreach (var post in social.RecentPosts.Take(15))
+            {
+                var text = post.Text.Length > 140 ? post.Text[..140] + "..." : post.Text;
+                <div class="social-post">
+                    <span class="who">@post.Timestamp.ToString("MM-dd") @@@post.Author</span>
+                    @if (post.Tagged != SignalDirection.Neutral)
+                    {
+                        <span class="tag @(post.Tagged.ToString().ToLowerInvariant())">[@post.Tagged]</span>
+                    }
+                    @text
+                </div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Ticker { get; set; } = "";
+
+    private double _amount = 10000;
+    private DateTime? _start;
+    private DateTime? _end;
+    private bool _simBusy;
+    private SimulationResult? _sim;
+    private string? _simError;
+
+    private bool _socialBusy;
+    private string _socialStatus = "";
+    private bool _socialError;
+
+    private void RunSimulation()
+    {
+        _simBusy = true;
+        try
+        {
+            _sim = Simulation.BuyAndHold(Ticker, _amount <= 0 ? 10000 : _amount, _start, _end);
+            _simError = null;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or ArgumentException or ArgumentOutOfRangeException or FormatException)
+        {
+            _simError = ex.Message;
+            _sim = null;
+        }
+        finally
+        {
+            _simBusy = false;
+        }
+    }
+
+    private async Task PullSocial()
+    {
+        _socialBusy = true;
+        _socialError = false;
+        _socialStatus = "Pulling latest chatter…";
+        StateHasChanged();
+        try
+        {
+            int added = await Social.FetchAndStoreAsync(Ticker);
+            _socialStatus = $"Pulled {added} posts from StockTwits.";
+        }
+        catch (Exception ex)
+        {
+            _socialStatus = $"warning: social fetch failed ({ex.Message})";
+            _socialError = true;
+        }
+        finally
+        {
+            _socialBusy = false;
+        }
+    }
+}

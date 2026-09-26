@@ -1,0 +1,33 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+
+<div class="ticker-header">
+    <span class="th-ticker">@Series.Ticker</span>
+    <span class="th-price">@Last.Close.ToString("0.00")</span>
+    <span class="th-change @(Change >= 0 ? "up" : "down")">
+        @(Change >= 0 ? "+" : "")@((Change * 100).ToString("0.00"))% <span class="chart-hint">(@Last.Timestamp.ToString("yyyy-MM-dd"))</span>
+    </span>
+    <div class="th-badges">
+        @if (Verdict is not null && Verdict.Direction != SignalDirection.Neutral)
+        {
+            <span class="th-badge @(Verdict.Direction == SignalDirection.Bullish ? "buy" : "sell")">
+                @(Verdict.Direction == SignalDirection.Bullish ? "▲" : "▼") @Verdict.Direction (@Verdict.Confidence.ToString("0")%)
+            </span>
+        }
+        @if (FiringCount > 0)
+        {
+            <span class="th-badge buy">@FiringCount rule@(FiringCount > 1 ? "s" : "") firing</span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SeriesAnalysis Series { get; set; } = null!;
+    [Parameter] public Verdict? Verdict { get; set; }
+    [Parameter] public int FiringCount { get; set; }
+
+    private Candle Last => Series.Candles[^1];
+    private double Change => Series.Candles.Count > 1 && Series.Candles[^2].Close > 0
+        ? Last.Close / Series.Candles[^2].Close - 1
+        : 0;
+}

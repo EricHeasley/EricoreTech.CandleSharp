@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EricoreTech.CandleSharp.App
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EricoreTech.CandleSharp.Infrastructure", "src\EricoreTech.CandleSharp.Infrastructure\EricoreTech.CandleSharp.Infrastructure.csproj", "{BB4E609F-E4C0-4216-ABA4-BC60AF9DE185}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EricoreTech.CandleSharp.Blazor", "src\EricoreTech.CandleSharp.Blazor\EricoreTech.CandleSharp.Blazor.csproj", "{6A9169AC-5D12-43CC-ADE9-6A41D298688F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -76,6 +78,10 @@ Global
 		{BB4E609F-E4C0-4216-ABA4-BC60AF9DE185}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BB4E609F-E4C0-4216-ABA4-BC60AF9DE185}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BB4E609F-E4C0-4216-ABA4-BC60AF9DE185}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6A9169AC-5D12-43CC-ADE9-6A41D298688F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6A9169AC-5D12-43CC-ADE9-6A41D298688F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6A9169AC-5D12-43CC-ADE9-6A41D298688F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6A9169AC-5D12-43CC-ADE9-6A41D298688F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{9EAD40B2-9CA9-4BD0-92F9-161079A92C25} = {A73C7C9B-8853-441B-8776-563DDF44EC07}
@@ -88,5 +94,6 @@ Global
 		{D7A4A752-DFA4-4C3C-B87E-412D7599FF2D} = {A73C7C9B-8853-441B-8776-563DDF44EC07}
 		{ACBDFBBC-E363-4048-8740-61096D6B86FA} = {A73C7C9B-8853-441B-8776-563DDF44EC07}
 		{BB4E609F-E4C0-4216-ABA4-BC60AF9DE185} = {A73C7C9B-8853-441B-8776-563DDF44EC07}
+		{6A9169AC-5D12-43CC-ADE9-6A41D298688F} = {A73C7C9B-8853-441B-8776-563DDF44EC07}
 	EndGlobalSection
 EndGlobal

@@ -1,0 +1,103 @@
+@implements IDisposable
+@inject Services.WatchlistService Watchlist
+@inject Services.DashboardState State
+
+<aside class="sidebar">
+    <div class="sidebar-head">
+        <h2>Watchlist</h2>
+        <button type="button" class="small" title="Refresh this list" @onclick="Reload">⟳</button>
+    </div>
+
+    @if (_rows is null)
+    {
+        <p class="watch-loading">Loading…</p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <p class="watchlist-empty">No stocks yet. Fetch one above.</p>
+    }
+    else
+    {
+        <div class="watchlist-rows" id="watchlist-rows">
+            @foreach (var row in _rows)
+            {
+                <button type="button"
+                        class="@RowClass(row)"
+                        title="@Title(row)"
+                        @onclick="() => State.Select(row.Ticker, row.Interval)">
+                    <span class="fire-dot"></span>
+                    <span class="wr-main">
+                        <span class="wr-top">
+                            <span>@row.Ticker</span>
+                            <span>@row.LastClose.ToString("0.00")</span>
+                        </span>
+                        <span class="wr-bottom">
+                            <span class="wr-change @(row.ChangePercent >= 0 ? "up" : "down")">
+                                @(row.ChangePercent >= 0 ? "+" : "")@((row.ChangePercent * 100).ToString("0.0"))%
+                            </span>
+                            @if (row.RulesFiring > 0)
+                            {
+                                <span class="wr-badge">@row.RulesFiring rule@(row.RulesFiring > 1 ? "s" : "") firing</span>
+                            }
+                            else if (row.ConsensusDirection is { } dir && dir != "Neutral")
+                            {
+                                <span>@dir</span>
+                            }
+                        </span>
+                    </span>
+                    <svg class="spark" viewBox="0 0 46 20" preserveAspectRatio="none">
+                        <polyline points="@SparkPoints(row.Sparkline)" fill="none"
+                                  stroke="@(row.ChangePercent >= 0 ? "var(--up)" : "var(--down)")" stroke-width="1.5" />
+                    </svg>
+                </button>
+            }
+        </div>
+    }
+</aside>
+
+@code {
+    private IReadOnlyList<Services.WatchlistRow>? _rows;
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+        Reload();
+    }
+
+    private void Reload()
+    {
+        _rows = Watchlist.Build(State.Interval);
+        if (State.Ticker is null && _rows.Count > 0)
+            State.Select(_rows[0].Ticker, _rows[0].Interval);
+        InvokeAsync(StateHasChanged);
+    }
+
+    // A fetch, a refresh-all, or a saved rule changing elsewhere should refresh
+    // the price/firing dots without the whole page re-fetching from scratch.
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Refresh() => Reload();
+
+    private string RowClass(Services.WatchlistRow row) =>
+        $"watch-row{(row.Ticker == State.Ticker ? " selected" : "")}{(row.RulesFiring > 0 ? " firing" : "")}";
+
+    private static string Title(Services.WatchlistRow row) =>
+        $"{row.Ticker} ({row.Interval}, {row.Bars} bars)";
+
+    private static string SparkPoints(IReadOnlyList<double> values)
+    {
+        if (values.Count < 2) return "";
+        double lo = values.Min(), hi = values.Max();
+        double range = hi - lo;
+        var points = new System.Text.StringBuilder();
+        for (int i = 0; i < values.Count; i++)
+        {
+            double x = i * 46.0 / (values.Count - 1);
+            double y = range > 0 ? 18 - (values[i] - lo) * 16 / range : 10;
+            points.Append(x.ToString("0.#")).Append(',').Append(y.ToString("0.#")).Append(' ');
+        }
+        return points.ToString();
+    }
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}
