@@ -1,0 +1,455 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+@inject RuleService RuleSvc
+
+<section class="card">
+    <div class="card-head">
+        <h2>My buy/sell rules</h2>
+        <span class="tagline">"when these are all true, it's a buy" &mdash; checked against this stock's history</span>
+    </div>
+
+    @if (_results is null)
+    {
+        <p class="tab-loading">Loading…</p>
+    }
+    else if (_results.Count == 0)
+    {
+        <p class="empty">No rules for @Ticker yet. Build one below, or use a suggestion.</p>
+    }
+    else
+    {
+        <div class="rule-list">
+            @foreach (var r in _results.OrderByDescending(r => r.FiringNow))
+            {
+                <div class="@RuleCardClass(r)">
+                    <div class="head">
+                        <span class="badge">
+                            @(r.Error is not null ? "error"
+                                : r.FiringNow ? $"{(r.Rule.Action == RuleAction.Buy ? "▲ BUY" : "▼ SELL")} NOW{(r.NewSignal ? " (new today)" : "")}"
+                                : $"{r.Rule.Action.ToString().ToLowerInvariant()} · waiting")
+                        </span>
+                        <span class="name">@r.Rule.Name</span>
+                        <span class="scope">@(r.Rule.Ticker == TradeRule.AnyTicker ? "every stock" : r.Rule.Ticker)</span>
+                        <button type="button" class="delete" @onclick="() => Delete(r.Rule.Id)">Delete</button>
+                    </div>
+                    <div class="conds">@string.Join("  AND  ", r.Rule.Conditions)</div>
+                    <div class="stats @(r.Error is not null ? "error" : "")">@((MarkupString)StatsHtml(r))</div>
+                    @if (r.Error is null && r.Signals.Count > 0)
+                    {
+                        <details>
+                            <summary>Past signals</summary>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr><th>Date</th><th>Close</th><th>@r.Rule.Horizon bars later</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var s in r.Signals.TakeLast(15).Reverse())
+                                        {
+                                            var aligned = s.ForwardReturn is { } fr ? (r.Rule.Action == RuleAction.Buy ? fr : -fr) : (double?)null;
+                                            <tr>
+                                                <td>@s.Timestamp.ToString("yyyy-MM-dd")</td>
+                                                <td class="num">@s.Close.ToString("0.00")</td>
+                                                <td class="num @(aligned is null ? "held-na" : aligned > 0 ? "dir-bullish" : "dir-bearish")">
+                                                    @(s.ForwardReturn is null ? "pending" : Pct(s.ForwardReturn))
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </details>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <div class="suggest-bar">
+        <button type="button" class="primary" disabled="@_suggesting" @onclick="RunSuggest">✨ Suggest rules from past performance</button>
+        <label class="field inline">
+            <span>judged over</span>
+            <input type="number" min="1" step="1" @bind="_suggestHorizon" style="width:64px" />
+            <span>bars</span>
+        </label>
+        <span class="status @(_suggestError ? "error" : "")">@_suggestStatus</span>
+    </div>
+
+    @if (_suggestions is not null)
+    {
+        <div class="suggestions">
+            <p class="pat-summary">
+                Tried @_suggestions.Tested.ToString("N0") rules on @Ticker's history up to @_suggestions.DiscoveryEnd.ToString("yyyy-MM-dd"),
+                then re-checked the best on the recent part. A score (t) around @_suggestions.LuckBar.ToString("0.0") can happen by luck.
+                @(_suggestions.Buy.Concat(_suggestions.Sell).Count(s => s.Strength == SuggestionStrength.Strong) is var strong && strong > 0
+                    ? $"{strong} strong rule(s) found."
+                    : "No strong rules: this stock's past doesn't show patterns that clearly beat luck.")
+            </p>
+            <div class="suggest-cols">
+                <div>
+                    <h3>Buy rules</h3>
+                    @if (_suggestions.Buy.Count == 0) { <p class="empty">None held up on recent data.</p> }
+                    @foreach (var s in _suggestions.Buy) { @SuggestionCard(s) }
+                </div>
+                <div>
+                    <h3>Sell rules</h3>
+                    @if (_suggestions.Sell.Count == 0) { <p class="empty">None held up on recent data.</p> }
+                    @foreach (var s in _suggestions.Sell) { @SuggestionCard(s) }
+                </div>
+            </div>
+            <p class="pat-note">Each rule was picked on older history, then re-checked on the most recent 30% it never saw.
+                <b>Strong</b> = better than luck could explain, <em>and</em> clearly held up recently. <b>Promising</b> = one of the two.
+                <b>Weak</b> = could easily be luck. Past results don't guarantee future ones.</p>
+        </div>
+    }
+
+    <details class="rule-builder" open="@_builderOpen">
+        <summary @onclick="ToggleBuilder" @onclick:preventDefault="true">＋ New rule</summary>
+        @if (_builderOpen)
+        {
+            <div class="simulator-form">
+                <label class="field">
+                    <span>When all of these are true…</span>
+                    <select @bind="_action">
+                        <option value="Buy">it's a BUY</option>
+                        <option value="Sell">it's a SELL</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>For</span>
+                    <select @bind="_scope">
+                        <option value="this">this stock only</option>
+                        <option value="*">every stock</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Score past signals over (bars)</span>
+                    <input type="number" min="1" step="1" @bind="_horizon" @bind:event="oninput" />
+                </label>
+                <label class="field grow">
+                    <span>Name (optional)</span>
+                    <input @bind="_name" @bind:event="oninput" placeholder="e.g. Oversold bounce" />
+                </label>
+            </div>
+
+            <div class="rule-conditions">
+                @for (int idx = 0; idx < _rows.Count; idx++)
+                {
+                    var row = _rows[idx];
+                    var i = idx;
+                    <div class="rule-condition">
+                        <span class="joiner">@(i == 0 ? "if" : "and")</span>
+                        <select value="@($"{row.Kind}:{row.Operand}")" @onchange="e => SetOperand(row, (string)e.Value!)">
+                            <optgroup label="Prices &amp; indicator values">
+                                @foreach (var v in Operands?.Values ?? []) { <option value="@($"v:{v}")">@v</option> }
+                            </optgroup>
+                            <optgroup label="Indicator signals">
+                                @foreach (var v in Operands?.Stances ?? []) { <option value="@($"s:{v}")">@v</option> }
+                            </optgroup>
+                        </select>
+                        <select @bind="row.Op">
+                            @foreach (var op in row.Kind == "s" ? StanceOps : ValueOps) { <option value="@op">@op</option> }
+                        </select>
+                        @if (row.Kind != "s")
+                        {
+                            <input @bind="row.Value" @bind:event="oninput" placeholder="30, -2%, or SMA_50" list="rule-value-names" />
+                        }
+                        <button type="button" class="small" title="Remove" @onclick="() => _rows.RemoveAt(i)">✕</button>
+                    </div>
+                }
+                <datalist id="rule-value-names">
+                    @foreach (var v in Operands?.Values ?? []) { <option value="@v"></option> }
+                </datalist>
+            </div>
+
+            @if (ComputePreview() is { } preview)
+            {
+                <div class="live-preview @(preview.Error is not null ? "empty" : "")">@((MarkupString)PreviewHtml(preview))</div>
+            }
+
+            <div class="rule-actions">
+                <button type="button" @onclick="AddRow">＋ Add condition</button>
+                <button type="button" class="primary" disabled="@(_rows.Count == 0)" @onclick="SaveBuilderRule">Save rule</button>
+                <span class="status @(_builderError ? "error" : "")">@_builderStatus</span>
+            </div>
+            <p class="pat-note">Compare with a number (<code>30</code>, <code>-2%</code>) or another value (<code>SMA_50</code>).
+                "crosses above/below" is true only on the bar the line is crossed; "turns" only on the bar the signal flips.</p>
+        }
+    </details>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SeriesAnalysis Series { get; set; } = null!;
+    [Parameter] public EventCallback OnRulesChanged { get; set; }
+    [Parameter] public PatternStat? PrefillPattern { get; set; }
+
+    private static readonly string[] ValueOps = ["<", "<=", ">", ">=", "crosses above", "crosses below"];
+    private static readonly string[] StanceOps = ["is Bullish", "is Bearish", "turns Bullish", "turns Bearish"];
+
+    private string Ticker => Series.Ticker;
+    private string Interval => Series.Interval;
+
+    private IReadOnlyList<RuleResult>? _results;
+    private RuleOperands? Operands;
+
+    // builder state
+    private bool _builderOpen;
+    private RuleAction _action = RuleAction.Buy;
+    private string _scope = "this";
+    private int _horizon = 10;
+    private string _name = "";
+    private readonly List<ConditionRow> _rows = [];
+    private string _builderStatus = "";
+    private bool _builderError;
+
+    // suggestions
+    private int _suggestHorizon = 10;
+    private bool _suggesting;
+    private string _suggestStatus = "";
+    private bool _suggestError;
+    private SuggestionReport? _suggestions;
+
+    private string? _lastTicker;
+    private string? _lastPrefillLabel;
+
+    protected override void OnParametersSet()
+    {
+        if (Ticker != _lastTicker)
+        {
+            _lastTicker = Ticker;
+            _suggestions = null;
+            _suggestStatus = "";
+            _rows.Clear();
+        }
+        Reload();
+
+        if (PrefillPattern is { } pattern && pattern.Label != _lastPrefillLabel)
+        {
+            _lastPrefillLabel = pattern.Label;
+            ApplyPrefill(pattern);
+        }
+    }
+
+    private void ApplyPrefill(PatternStat pattern)
+    {
+        _rows.Clear();
+        foreach (var text in pattern.RuleConditions ?? [])
+            _rows.Add(ParseConditionText(text));
+        _action = pattern.Edge >= 0 ? RuleAction.Buy : RuleAction.Sell;
+        _scope = "this";
+        _name = pattern.Label;
+        _builderStatus = "From a pattern — check the conditions, then Save rule.";
+        _builderError = false;
+        _builderOpen = true;
+    }
+
+    private void Reload()
+    {
+        _results = RuleSvc.Evaluate(Ticker, Interval);
+        Operands = RuleSvc.Operands(Ticker, Interval);
+        if (_rows.Count == 0) AddRow();
+    }
+
+    public void Refresh() => Reload();
+
+    private void ToggleBuilder() => _builderOpen = !_builderOpen;
+
+    private void AddRow()
+    {
+        var row = new ConditionRow { Kind = "v", Operand = Operands?.Values.FirstOrDefault(v => v == "RSI_14") ?? Operands?.Values.FirstOrDefault() ?? "Close", Op = "<" };
+        _rows.Add(row);
+    }
+
+    private void SetOperand(ConditionRow row, string combined)
+    {
+        var parts = combined.Split(':', 2);
+        row.Kind = parts[0];
+        row.Operand = parts.Length > 1 ? parts[1] : "";
+        if (!(row.Kind == "s" ? StanceOps : ValueOps).Contains(row.Op))
+            row.Op = row.Kind == "s" ? StanceOps[0] : ValueOps[0];
+    }
+
+    private static string ConditionText(ConditionRow row) =>
+        row.Kind == "s" ? $"{row.Operand} {row.Op}" : $"{row.Operand} {row.Op} {row.Value.Trim()}";
+
+    private RuleResult? ComputePreview()
+    {
+        if (_rows.Count == 0) return null;
+        if (_rows.Any(r => r.Kind != "s" && string.IsNullOrWhiteSpace(r.Value))) return null;
+        var conditions = _rows.Select(ConditionText).ToList();
+        try
+        {
+            return RuleSvc.Preview(Ticker, Interval, _action, conditions, _horizon);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidOperationException or ArgumentException)
+        {
+            return RuleResult.Failed(new TradeRule("", "", Ticker, _action, conditions, _horizon), Ticker, ex.Message);
+        }
+    }
+
+    private async Task SaveBuilderRule()
+    {
+        if (_rows.Any(r => r.Kind != "s" && string.IsNullOrWhiteSpace(r.Value)))
+        {
+            _builderStatus = "Fill in a value for every comparison.";
+            _builderError = true;
+            return;
+        }
+        try
+        {
+            RuleSvc.Add(_name, _scope == "*" ? "*" : Ticker, _action, _rows.Select(ConditionText).ToList(), _horizon, Interval);
+            _builderStatus = "Saved.";
+            _builderError = false;
+            _name = "";
+            _rows.Clear();
+            AddRow();
+            _builderOpen = false;
+            Reload();
+            await OnRulesChanged.InvokeAsync();
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        {
+            _builderStatus = ex.Message;
+            _builderError = true;
+        }
+    }
+
+    private async Task Delete(string id)
+    {
+        RuleSvc.Remove(id);
+        Reload();
+        await OnRulesChanged.InvokeAsync();
+    }
+
+    private async Task RunSuggest()
+    {
+        _suggesting = true;
+        _suggestError = false;
+        _suggestStatus = "Testing hundreds of rules against this stock's history…";
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            _suggestions = RuleSvc.Suggest(Ticker, Interval, new SuggestOptions(Horizon: Math.Max(1, _suggestHorizon)));
+            _suggestStatus = "";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            _suggestStatus = ex.Message;
+            _suggestError = true;
+            _suggestions = null;
+        }
+        finally
+        {
+            _suggesting = false;
+        }
+    }
+
+    private async Task SaveSuggestion(RuleSuggestion s)
+    {
+        RuleSvc.Add($"{s.Rule.Action}: {string.Join(" and ", s.Rule.Conditions)}", Ticker, s.Rule.Action, s.Rule.Conditions, s.Rule.Horizon, Interval);
+        Reload();
+        await OnRulesChanged.InvokeAsync();
+    }
+
+    private void EditSuggestion(RuleSuggestion s)
+    {
+        _rows.Clear();
+        foreach (var text in s.Rule.Conditions)
+        {
+            var parsed = ParseConditionText(text);
+            _rows.Add(parsed);
+        }
+        _action = s.Rule.Action;
+        _scope = "this";
+        _horizon = s.Rule.Horizon;
+        _name = "";
+        _builderStatus = "Adjust the conditions, then Save rule.";
+        _builderError = false;
+        _builderOpen = true;
+    }
+
+    private static ConditionRow ParseConditionText(string text)
+    {
+        var stance = System.Text.RegularExpressions.Regex.Match(text, @"^(.+?) (is|turns) (bullish|bearish|neutral)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (stance.Success)
+            return new ConditionRow { Kind = "s", Operand = stance.Groups[1].Value, Op = $"{stance.Groups[2].Value.ToLowerInvariant()} {Cap(stance.Groups[3].Value)}" };
+        var compare = System.Text.RegularExpressions.Regex.Match(text, @"^(.+?) (<=|>=|<|>|crosses above|crosses below) (.+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (compare.Success)
+            return new ConditionRow { Kind = "v", Operand = compare.Groups[1].Value, Op = compare.Groups[2].Value.ToLowerInvariant(), Value = compare.Groups[3].Value };
+        return new ConditionRow { Kind = "v", Operand = text, Op = "<", Value = "" };
+    }
+
+    private static string RuleCardClass(RuleResult r) =>
+        $"rule {(r.Rule.Action == RuleAction.Buy ? "buy" : "sell")}{(r.FiringNow ? " firing" : "")}";
+
+    private static string Cap(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
+
+    private static string Pct(double? v) => v is { } x ? $"{(x >= 0 ? "+" : "")}{(x * 100).ToString("0.00")}%" : "–";
+
+    // Built as HTML strings (only ever fed our own numeric/formatted values, never
+    // user text) so a bold "% right"/"edge" can sit inline without fighting Razor's
+    // markup-vs-code-block parsing for a sentence built from several C# values.
+    private static string Esc(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
+
+    private static string StatsHtml(RuleResult r)
+    {
+        if (r.Error is not null) return Esc(r.Error);
+        if (r.Signals.Count == 0) return "Never fired in the stored history.";
+        if (r.Scored == 0)
+            return $"Fired {r.Signals.Count} time(s), last on {r.LastSignal:yyyy-MM-dd}. Not enough bars since to score it yet.";
+
+        bool buy = r.Rule.Action == RuleAction.Buy;
+        bool good = r.HitRate >= 0.5;
+        var line = $"Fired {r.Signals.Count} time(s), last on {r.LastSignal:yyyy-MM-dd}. " +
+            $"<b class=\"{(good ? "good" : "bad")}\">{Math.Round(r.HitRate!.Value * 100)}% right</b> " +
+            $"({(buy ? "higher" : "lower")} {r.Rule.Horizon} bars later) &middot; avg move {Pct(r.AvgReturn)} &middot; " +
+            $"<b class=\"{(r.Edge > 0 ? "good" : "bad")}\">{Pct(r.Edge)} vs a typical stretch</b> " +
+            $"&middot; best {Pct(r.Best)}, worst {Pct(r.Worst)}";
+        if (r.Scored < 10) line += " &middot; few signals, treat with caution";
+        return line;
+    }
+
+    private static string PreviewHtml(RuleResult preview)
+    {
+        if (preview.Error is not null) return Esc(preview.Error);
+        if (preview.Signals.Count == 0) return "Would never have fired in the stored history.";
+        if (preview.Scored == 0) return $"Would have fired {preview.Signals.Count} time(s) &mdash; not enough bars since to score.";
+
+        bool good = preview.HitRate >= 0.5;
+        return $"Would have fired <b>{preview.Signals.Count}</b> time(s), " +
+            $"<b class=\"{(good ? "good" : "bad")}\">{Math.Round(preview.HitRate!.Value * 100)}% right</b>, " +
+            $"avg move {Pct(preview.AvgReturn)}, edge <b class=\"{(preview.Edge > 0 ? "good" : "bad")}\">{Pct(preview.Edge)}</b> vs a typical stretch.";
+    }
+
+    private RenderFragment SuggestionCard(RuleSuggestion s) => @<div class="rule suggestion @(s.Rule.Action == RuleAction.Buy ? "buy" : "sell")">
+        <div class="head">
+            <span class="grade @(s.Strength.ToString().ToLowerInvariant())">@s.Strength</span>
+            @if (s.FiringNow)
+            {
+                <span class="now">@(s.Rule.Action == RuleAction.Buy ? "▲ firing now" : "▼ firing now")</span>
+            }
+        </div>
+        <div class="conds">@string.Join("  AND  ", s.Rule.Conditions)</div>
+        <div class="stats">Older history: @StatsLine(s.Discovery, s.Rule.Horizon, s.Rule.Action == RuleAction.Buy).</div>
+        <div class="stats">
+            @(s.HeldUp == true
+                ? $"Recent check: held up — {StatsLine(s.Recent!, s.Rule.Horizon, s.Rule.Action == RuleAction.Buy)}."
+                : $"Recent check: fired only {s.Recent?.Signals ?? 0} time(s) — too few to judge.")
+        </div>
+        <div class="buttons">
+            <button type="button" class="small primary" @onclick="() => SaveSuggestion(s)">Save rule</button>
+            <button type="button" class="small" @onclick="() => EditSuggestion(s)">Edit first</button>
+        </div>
+    </div>;
+
+    private static string StatsLine(SignalStats s, int horizon, bool buy) =>
+        $"{s.Signals} signal(s), {Math.Round(s.HitRate * 100)}% right ({(buy ? "higher" : "lower")} {horizon} bars later), " +
+        $"avg move {Pct(s.AvgReturn)}, {Pct(s.Edge)} vs a typical stretch";
+
+    private sealed class ConditionRow
+    {
+        public string Kind = "v";
+        public string Operand = "";
+        public string Op = "<";
+        public string Value = "";
+    }
+}
