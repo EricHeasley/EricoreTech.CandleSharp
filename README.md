@@ -88,29 +88,14 @@ dotnet run --project src/EricoreTech.CandleSharp.Cli -- signals AAPL --interval 
 dotnet run --project src/EricoreTech.CandleSharp.Web
 ```
 
-Open http://localhost:5000. The dashboard shows a candlestick chart with
-toggleable overlays (SMA/EMA/Bollinger), trigger markers on the bars, an RSI
-panel, each indicator's current stance, and the recent trigger table — light
-and dark theme both supported. You can fetch new tickers straight from the
-page. It reads/writes the same `./data` directory as the CLI and loads the
-same `./plugins` directory, so both frontends always agree.
+Open http://localhost:5000 (or whatever port it prints). One project serves
+both an interactive Blazor Server dashboard at `/` and a JSON API + printable
+report alongside it — same `./data`/`./plugins` directories as the CLI, so
+every frontend always agrees.
 
-API, if you want to script against it: `GET /api/datasets`,
-`GET /api/series/{ticker}?interval=1d`, `GET /api/indicators`,
-`POST /api/fetch {"ticker","period","interval"}`,
-`GET /api/patterns?tickers=AAPL&horizon=10`.
-
-## Blazor dashboard (interactive)
-
-```bash
-dotnet run --project src/EricoreTech.CandleSharp.Blazor
-```
-
-Open http://localhost:5000 (or whatever port it prints). A second, more
-interactive dashboard built with Blazor Server — same `./data`/`./plugins`,
-same feature set as the CLI's Application/Domain/Infrastructure layers, but
-reworked around the idea that everything should feel like one connected
-tool rather than a stack of report cards:
+The dashboard at `/` is built with Blazor Server and reworked around the
+idea that everything should feel like one connected tool rather than a
+stack of report cards:
 
 - **Watchlist sidebar** — every saved ticker with a live price, day change,
   a mini sparkline, and a green dot when one of your rules is firing on it;
@@ -120,7 +105,7 @@ tool rather than a stack of report cards:
   signals on the candles (green = worked out, red = didn't), and clicking a
   row in "Recent triggers" drops a highlight line at that bar.
 - **Tabs instead of one long scroll** — Overview (gauge + chart), My Rules,
-  Patterns, Indicators, Research (dividends/simulator/social).
+  Patterns, ML Guidance, Indicators, Research (dividends/simulator/social).
 - **Live rule preview** — as you build a rule with the dropdowns, it
   immediately shows how many times it would have fired and its hit rate,
   before you save anything; no separate "test" step.
@@ -133,6 +118,20 @@ Because Blazor Server keeps the UI and the application services in the same
 process, every interaction (a slider drag, a rule preview, a suggestion)
 runs as a direct C# call — no separate JSON API to keep in sync, which is
 what makes the live preview and chart interactivity practical to build.
+
+Alongside the dashboard, the same project exposes a JSON API for scripting
+and a printable per-ticker report:
+
+- `GET /api/datasets`, `GET /api/series/{ticker}?interval=1d`,
+  `GET /api/indicators`, `POST /api/fetch {"ticker","period","interval"}`,
+  `GET /api/patterns?tickers=AAPL&horizon=10`, `GET /api/ml/{ticker}`,
+  `GET /api/rules/{ticker}`, `POST /api/rules`, `DELETE /api/rules/{id}`.
+- `GET /report/{ticker}` renders a self-contained, printable HTML report
+  (verdict, every agent's view, the walk-forward backtest, dividends, crowd
+  sentiment, a buy-and-hold simulation) — handy for scripting or sharing
+  outside the interactive dashboard. It re-runs each agent's full
+  walk-forward backtest on request, so on a long history it can take tens
+  of seconds; that cost comes from `Backtester`, not the dashboard.
 
 ## ML guidance
 

@@ -1,4 +1,4 @@
-namespace EricoreTech.CandleSharp.Blazor.Services
+namespace EricoreTech.CandleSharp.Web.Services
 {
     /// <summary>
     /// The one piece of UI state genuinely shared across components in a

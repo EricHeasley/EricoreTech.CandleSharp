@@ -2,7 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 
-namespace EricoreTech.CandleSharp.Blazor.Components.Dashboard
+namespace EricoreTech.CandleSharp.Web.Components.Dashboard
 {
     /// <summary>
     /// An SVG &lt;text&gt; element with attributes, built directly through
