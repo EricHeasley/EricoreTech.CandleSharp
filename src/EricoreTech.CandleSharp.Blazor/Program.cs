@@ -29,6 +29,7 @@ builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<WatchService>();
 builder.Services.AddSingleton<PatternService>();
 builder.Services.AddSingleton<RuleService>();
+builder.Services.AddSingleton<MLGuidanceService>();
 builder.Services.AddSingleton<WatchlistService>();
 
 // The one piece of state shared across a browser tab's circuit: which ticker is selected.

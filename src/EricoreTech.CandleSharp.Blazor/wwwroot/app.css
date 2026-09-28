@@ -503,3 +503,15 @@ tr.row-selected { background: var(--bb-fill); }
     right: 0.75rem;
     top: 0.5rem;
 }
+
+/* ML guidance */
+.ml-headline { font-size: 17px; font-weight: 700; margin: 4px 0 8px; }
+.ml-headline.bullish { color: var(--up); }
+.ml-headline.bearish { color: var(--down); }
+.ml-headline.neutral { color: var(--ink-2); }
+.feature-bars { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.feature-bar-row { display: grid; grid-template-columns: 160px 1fr 42px; align-items: center; gap: 8px; font-size: 12px; }
+.feature-name { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feature-bar-track { background: var(--grid); border-radius: 999px; height: 8px; overflow: hidden; }
+.feature-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.feature-pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }

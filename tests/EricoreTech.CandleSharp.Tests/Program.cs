@@ -786,6 +786,55 @@ Check(ThrowsOf<InvalidOperationException>(() =>
 Check(ThrowsOf<ArgumentOutOfRangeException>(() => new SuggestOptions(TestFraction: 0).Validate()),
     "suggestions need a recent period to check against");
 
+// --- MLGuidanceAnalyzer: learns the planted swing pattern, and finds nothing in pure noise ---
+var mlPhase = Enumerable.Range(0, plantedBars).Select(i => (double?)(i % 20)).ToArray();
+var mlNoise = new Random(11);
+var mlNoiseCol = Enumerable.Range(0, plantedBars).Select(_ => (double?)mlNoise.NextDouble()).ToArray();
+var mlTable = new SnapshotTable(
+    "PLNT", planted.Timestamps, planted.Closes,
+    [("PHASE", mlPhase), ("NOISE", mlNoiseCol)], planted.Stances);
+// Step 7 is deliberately not a divisor of the 20-bar cycle, so checkpoints sample every
+// phase of it roughly evenly instead of always landing on the same point in the cycle.
+var mlOptions = new MLGuidanceOptions(Horizon: 10, Warmup: 250, Step: 7, NumTrees: 15);
+var mlGuideReport = MLGuidanceAnalyzer.Analyze(mlTable, mlOptions);
+Check(mlGuideReport.HitRate > 0.9 && mlGuideReport.Checkpoints > 0,
+    $"planted-pattern ML model should track the cycle closely, got hitRate={mlGuideReport.HitRate:P0} over {mlGuideReport.Checkpoints} checkpoints");
+Check(mlGuideReport.TopFeatures.Count > 0 && mlGuideReport.TopFeatures[0].Name == "PHASE",
+    $"PHASE should dominate feature importance, got top feature {mlGuideReport.TopFeatures.FirstOrDefault()?.Name}");
+Check(mlGuideReport.BaselineHitRate is > 0.4 and < 0.6, $"baseline hit rate should be near a coin flip, got {mlGuideReport.BaselineHitRate:P0}");
+
+var mlNoiseCloses = new List<double> { 100 };
+var mlPriceRng = new Random(123);
+for (int i = 1; i < plantedBars; i++) mlNoiseCloses.Add(mlNoiseCloses[^1] * (1 + (mlPriceRng.NextDouble() - 0.5) * 0.02));
+var mlNoiseTable = new SnapshotTable(
+    "NOIZ2", planted.Timestamps, mlNoiseCloses,
+    [("PHASE", mlPhase), ("NOISE", mlNoiseCol)], planted.Stances);
+var mlGuideNoiseReport = MLGuidanceAnalyzer.Analyze(mlNoiseTable, mlOptions);
+Check(Math.Abs(mlGuideNoiseReport.HitRate - mlGuideNoiseReport.BaselineHitRate) < 0.15,
+    $"pure noise should show no real edge over baseline, got hitRate={mlGuideNoiseReport.HitRate:P0} vs baseline={mlGuideNoiseReport.BaselineHitRate:P0}");
+
+Check(ThrowsOf<InvalidOperationException>(() => MLGuidanceAnalyzer.Analyze(mlTable, new MLGuidanceOptions(Warmup: plantedBars))),
+    "too little remaining history after warmup should be rejected");
+Check(ThrowsOf<ArgumentOutOfRangeException>(() => new MLGuidanceOptions(NeutralBand: 0.6).Validate()),
+    "neutral band must be under 0.5");
+
+// --- RegressionTree / GradientBoostedTrees: a trivially separable toy problem ---
+var toyX = new double[200][];
+var toyY = new double[200];
+var toyRng = new Random(3);
+for (int i = 0; i < 200; i++)
+{
+    double a = toyRng.NextDouble() * 10;
+    double b = toyRng.NextDouble() * 10;
+    toyX[i] = [a, b];
+    toyY[i] = a + b > 10 ? 1 : 0;
+}
+var toyModel = GradientBoostedTrees.Fit(toyX, toyY, new BoostOptions(NumTrees: 15, MaxDepth: 3, FeatureFraction: 1.0));
+int toyCorrect = 0;
+for (int i = 0; i < 200; i++)
+    if ((toyModel.PredictProbability(toyX[i]) >= 0.5) == (toyY[i] == 1)) toyCorrect++;
+Check(toyCorrect >= 190, $"GBT should learn a simple linear-separable rule near-perfectly, got {toyCorrect}/200");
+
 if (failures == 0)
 {
     Console.WriteLine("All tests passed.");

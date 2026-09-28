@@ -1,0 +1,147 @@
+@using EricoreTech.CandleSharp.Application
+@using EricoreTech.CandleSharp.Domain
+@inject MLGuidanceService MLGuidance
+
+<section class="card">
+    <div class="card-head">
+        <h2>ML guidance</h2>
+        <span class="tagline">a gradient-boosted-trees model trained on this stock's own indicator history</span>
+    </div>
+
+    <div class="simulator-form">
+        <label class="field"><span>Look ahead (bars)</span><input type="number" min="1" step="1" @bind="_horizon" /></label>
+        <label class="field"><span>Warm-up (bars)</span><input type="number" min="30" step="10" @bind="_warmup" /></label>
+        <label class="field"><span>Checkpoint every</span><input type="number" min="1" step="5" @bind="_step" /></label>
+        <label class="field"><span>Trees</span><input type="number" min="1" step="5" @bind="_trees" /></label>
+        <button type="button" class="primary" disabled="@_busy" @onclick="Run">Train &amp; analyze</button>
+    </div>
+
+    @if (_status.Length > 0)
+    {
+        <p class="pat-summary @(_error ? "error" : "")">@_status</p>
+    }
+
+    @if (_report is { } r)
+    {
+        <div class="ml-headline @(r.Direction.ToString().ToLowerInvariant())">
+            @Icon(r.Direction) @r.Direction &mdash; @Math.Round(r.Probability * 100)% probability of being higher in @r.Options.Horizon bars
+            <span class="chart-hint">(confidence @Math.Round(r.Confidence)%)</span>
+        </div>
+        <p class="pat-summary">
+            Trained on @r.FeatureCount features from data as of @r.AsOf.ToString("yyyy-MM-dd").
+            @if (r.Excluded.Count > 0)
+            {
+                @:Excluded (uses future bars): @string.Join(", ", r.Excluded).
+            }
+        </p>
+
+        <h3>Walk-forward check</h3>
+        <p class="pat-summary">
+            A fresh model was retrained at each of @r.Checkpoints points in history, using only data available by
+            then, and scored against what actually happened next &mdash; the same honesty check the backtester
+            applies to the rule-based agents.
+        </p>
+        <p class="pat-summary">
+            <b class="@(r.HitRate >= r.BaselineHitRate ? "good" : "bad")">@Math.Round(r.HitRate * 100)% right</b>
+            on @r.Directional directional call(s), vs a <b>@Math.Round(r.BaselineHitRate * 100)%</b> naive baseline
+            (always guessing whichever direction was more common) &middot;
+            avg move when right direction @Pct(r.AvgAlignedReturn) &middot; cumulative @Pct(r.CumulativeAlignedReturn)
+        </p>
+
+        <h3>What it's weighing</h3>
+        <div class="feature-bars">
+            @foreach (var f in r.TopFeatures)
+            {
+                <div class="feature-bar-row">
+                    <span class="feature-name">@f.Name</span>
+                    <span class="feature-bar-track"><span class="feature-bar-fill" style="width:@((f.Importance * 100).ToString("0.#"))%"></span></span>
+                    <span class="feature-pct">@Math.Round(f.Importance * 100)%</span>
+                </div>
+            }
+        </div>
+
+        @if (r.Calibration.Count > 0)
+        {
+            <details>
+                <summary>Calibration &mdash; is "70% confident" actually right 70% of the time?</summary>
+                <div class="table-scroll">
+                    <table>
+                        <thead><tr><th>Predicted probability</th><th>Samples</th><th>Model said</th><th>Actually happened</th></tr></thead>
+                        <tbody>
+                            @foreach (var c in r.Calibration)
+                            {
+                                <tr>
+                                    <td>@c.Range</td>
+                                    <td class="num">@c.Samples</td>
+                                    <td class="num">@Math.Round(c.PredictedAvg * 100)% up</td>
+                                    <td class="num">@Math.Round(c.ActualUpRate * 100)% up</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        }
+
+        <p class="pat-note">
+            Trained on one stock's own noisy history with no outside data — treat it as one more opinion to weigh
+            against the rule-based agents, patterns, and your own judgment, not a signal to act on by itself.
+            A model whose walk-forward hit rate barely beats its baseline, or whose calibration table doesn't
+            track its own confidence, isn't telling you much. Not financial advice.
+        </p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Ticker { get; set; } = "";
+    [Parameter, EditorRequired] public string Interval { get; set; } = "1d";
+
+    private int _horizon = 10;
+    private int _warmup = 250;
+    private int _step = 25;
+    private int _trees = 20;
+    private bool _busy;
+    private string _status = "";
+    private bool _error;
+    private MLGuidanceReport? _report;
+
+    private string? _lastTicker;
+
+    protected override void OnParametersSet()
+    {
+        if (Ticker == _lastTicker) return;
+        _lastTicker = Ticker;
+        _report = null;
+        _status = "";
+    }
+
+    private async Task Run()
+    {
+        _busy = true;
+        _error = false;
+        _status = "Training a fresh model at every checkpoint in this stock's history — a few seconds…";
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            var options = new MLGuidanceOptions(
+                Horizon: Math.Max(1, _horizon), Warmup: Math.Max(30, _warmup), Step: Math.Max(1, _step),
+                NumTrees: Math.Max(1, _trees));
+            _report = MLGuidance.Analyze(Ticker, Interval, options);
+            _status = "";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            _status = ex.Message;
+            _error = true;
+            _report = null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Pct(double v) => $"{(v >= 0 ? "+" : "")}{(v * 100).ToString("0.00")}%";
+    private static string Icon(SignalDirection d) => d switch { SignalDirection.Bullish => "▲", SignalDirection.Bearish => "▼", _ => "▬" };
+}
