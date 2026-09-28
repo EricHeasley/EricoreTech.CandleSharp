@@ -27,6 +27,7 @@ static async Task<int> RunAsync(string[] args)
     var reports = new ReportService(analysis, market, simulation, social);
     var patterns = new PatternService(repository, new CsvSnapshotRepository(repository.DataDirectory), catalog);
     var ruleService = new RuleService(repository, new JsonRuleStore(repository.DataDirectory), catalog);
+    var mlGuidance = new MLGuidanceService(repository, catalog);
     var watch = new WatchService(repository, dividendRepository, socialRepository, catalog, new JsonAgentStateStore(repository.DataDirectory), feed);
 
     var command = positional[0];
@@ -54,6 +55,7 @@ static async Task<int> RunAsync(string[] args)
             "snapshot" => RunSnapshot(rest, opts, patterns, catalog),
             "patterns" => RunPatterns(rest, opts, patterns, catalog),
             "rules" => RunRules(rest, opts, ruleService),
+            "ml" => RunMLGuidance(rest, opts, mlGuidance),
             "rule" => RunRule(rest, opts, ruleService),
             _ => Usage($"Unknown command: {command}"),
         };
@@ -540,6 +542,44 @@ static string Pct(double value, int decimals = 2)
     return Math.Round(value, decimals + 2).ToString($"+0.{digits}%;-0.{digits}%;0.{digits}%", CultureInfo.InvariantCulture);
 }
 
+static int RunMLGuidance(List<string> rest, Dictionary<string, string> opts, MLGuidanceService ml)
+{
+    if (rest.Count == 0) return Usage("ml needs a ticker, e.g.: ml AAPL --horizon 10");
+
+    var options = new MLGuidanceOptions(
+        Horizon: int.Parse(opts.GetValueOrDefault("horizon", "10"), CultureInfo.InvariantCulture),
+        Warmup: int.Parse(opts.GetValueOrDefault("warmup", "250"), CultureInfo.InvariantCulture),
+        Step: int.Parse(opts.GetValueOrDefault("step", "25"), CultureInfo.InvariantCulture),
+        NumTrees: int.Parse(opts.GetValueOrDefault("trees", "20"), CultureInfo.InvariantCulture),
+        MaxDepth: int.Parse(opts.GetValueOrDefault("depth", "3"), CultureInfo.InvariantCulture));
+    var r = ml.Analyze(rest[0], opts.GetValueOrDefault("interval", "1d"), options);
+
+    Console.WriteLine($"ML guidance for {r.Ticker} ({options.Horizon}-bar horizon), trained on {r.FeatureCount} features as of {r.AsOf:yyyy-MM-dd}");
+    if (r.Excluded.Count > 0)
+        Console.WriteLine($"Excluded (uses future bars): {string.Join(", ", r.Excluded)}");
+    Console.WriteLine();
+    Console.WriteLine($"{Icon(r.Direction)} {r.Direction}  probability of higher in {options.Horizon} bars: {r.Probability * 100:0.0}%  (confidence {r.Confidence:0}%)");
+    Console.WriteLine();
+    Console.WriteLine("Top features:");
+    foreach (var f in r.TopFeatures.Take(8))
+        Console.WriteLine($"  {f.Name,-26} {f.Importance * 100,5:0.0}%");
+    Console.WriteLine();
+    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+        $"Walk-forward check: {r.Checkpoints} checkpoints, {r.Directional} directional, {r.HitRate * 100:0}% right vs a {r.BaselineHitRate * 100:0}% naive baseline; " +
+        $"avg move when right direction {r.AvgAlignedReturn * 100:+0.00;-0.00}%, cumulative {r.CumulativeAlignedReturn * 100:+0.0;-0.0}%."));
+    if (r.Calibration.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Calibration (predicted probability vs how often the stock was actually up):");
+        foreach (var c in r.Calibration)
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {c.Range,-8} n={c.Samples,4}  predicted~{c.PredictedAvg * 100:0}%  actual~{c.ActualUpRate * 100:0}%"));
+    }
+    Console.WriteLine();
+    Console.WriteLine("A model trained on one stock's own noisy history — treat it as one more opinion, not a signal. Not financial advice.");
+    return 0;
+}
+
 static int RunRules(List<string> rest, Dictionary<string, string> opts, RuleService rules)
 {
     var interval = opts.GetValueOrDefault("interval", "1d");
@@ -862,6 +902,7 @@ static int Usage(string? error = null)
           candlesharp rule remove <ID>
           candlesharp rule suggest <TICKER> [--horizon 10] [--min-signals 8] [--top 5]
           candlesharp rule fields <TICKER>
+          candlesharp ml <TICKER> [--horizon 10] [--warmup 250] [--step 25] [--trees 20] [--depth 3]
 
         Global options:
           --data-dir <dir>   Directory for local CSV files (default: ./data)

@@ -35,6 +35,7 @@ builder.Services.AddSingleton<ReportService>();
 builder.Services.AddSingleton<WatchService>();
 builder.Services.AddSingleton<PatternService>();
 builder.Services.AddSingleton<RuleService>();
+builder.Services.AddSingleton<MLGuidanceService>();
 
 var app = builder.Build();
 
@@ -323,6 +324,43 @@ app.MapGet("/api/rules/{ticker}/operands", (string ticker, string? interval, Rul
     catch (FileNotFoundException ex)
     {
         return Results.NotFound(new { error = ex.Message });
+    }
+});
+
+app.MapGet("/api/ml/{ticker}", (string ticker, string? interval, int? horizon, int? warmup, int? step, int? trees, int? depth, MLGuidanceService ml) =>
+{
+    try
+    {
+        var options = new MLGuidanceOptions(
+            Horizon: horizon ?? 10, Warmup: warmup ?? 250, Step: step ?? 25,
+            NumTrees: trees ?? 20, MaxDepth: depth ?? 3);
+        var r = ml.Analyze(ticker, interval ?? "1d", options);
+        return Results.Ok(new
+        {
+            ticker = r.Ticker,
+            asOf = r.AsOf,
+            featureCount = r.FeatureCount,
+            excluded = r.Excluded,
+            direction = r.Direction.ToString(),
+            confidence = r.Confidence,
+            probability = r.Probability,
+            topFeatures = r.TopFeatures.Select(f => new { name = f.Name, importance = f.Importance }),
+            checkpoints = r.Checkpoints,
+            directional = r.Directional,
+            hitRate = r.HitRate,
+            avgAlignedReturn = r.AvgAlignedReturn,
+            cumulativeAlignedReturn = r.CumulativeAlignedReturn,
+            baselineHitRate = r.BaselineHitRate,
+            calibration = r.Calibration.Select(c => new { range = c.Range, samples = c.Samples, predictedAvg = c.PredictedAvg, actualUpRate = c.ActualUpRate }),
+        });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
     }
 });
 

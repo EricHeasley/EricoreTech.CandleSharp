@@ -134,6 +134,43 @@ process, every interaction (a slider drag, a rule preview, a suggestion)
 runs as a direct C# call — no separate JSON API to keep in sync, which is
 what makes the live preview and chart interactivity practical to build.
 
+## ML guidance
+
+A gradient-boosted-trees model (dependency-free, written from scratch —
+`RegressionTree`/`GradientBoostedTrees` in Domain — same philosophy as the
+rest of the math in this project) trained on one stock's own indicator
+history, predicting whether it will be higher some number of bars from now:
+
+```bash
+dotnet run --project src/EricoreTech.CandleSharp.Cli -- ml AAPL --horizon 10
+```
+
+Every indicator column and stance becomes a feature (price-level ones —
+moving averages, bands, stops — expressed as distance from the close, same
+as the pattern finder), and the model is graded the way this project grades
+everything: **walk-forward**. A fresh model is retrained at each checkpoint
+using only data available by then and scored against what actually
+happened next, exactly like `Backtester` does for the rule-based agents.
+The report shows:
+
+- the current prediction (direction, probability, confidence),
+- which features it actually weighed (importance from total variance
+  reduction across every tree),
+- the walk-forward hit rate against a naive "always guess the more common
+  direction" baseline, and
+- a calibration table — when it says "70% confident", was the stock
+  actually up 70% of the time in that bucket? A model whose confidence
+  numbers don't track reality isn't very useful, however good its raw hit
+  rate looks.
+
+Options: `--horizon`, `--warmup 250`, `--step 25` (checkpoint spacing —
+smaller means more checkpoints and a slower but more thorough run),
+`--trees 20`, `--depth 3`. Lives in the Blazor dashboard's **ML Guidance**
+tab, and `GET /api/ml/{ticker}` on the classic dashboard. Trained on one
+stock's own noisy history with no outside data — one more opinion to weigh
+against the rule-based agents and patterns, not a signal by itself. Not
+financial advice.
+
 ## Shipped indicator packs
 
 | Indicator | Stance logic |

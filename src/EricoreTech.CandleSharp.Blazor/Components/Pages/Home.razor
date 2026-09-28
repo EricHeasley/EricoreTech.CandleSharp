@@ -51,6 +51,9 @@ else
             case "Patterns":
                 <PatternsPanel Ticker="@State.Ticker" Interval="@State.Interval" OnUseAsRule="HandleUseAsRule" />
                 break;
+            case "ML Guidance":
+                <MLGuidancePanel Ticker="@State.Ticker" Interval="@State.Interval" />
+                break;
             case "Indicators":
                 <SignalsPanel Series="_series" />
                 break;
@@ -62,7 +65,7 @@ else
 }
 
 @code {
-    private static readonly string[] Tabs = ["Overview", "My Rules", "Patterns", "Indicators", "Research"];
+    private static readonly string[] Tabs = ["Overview", "My Rules", "Patterns", "ML Guidance", "Indicators", "Research"];
     private string _activeTab = "Overview";
 
     private EricoreTech.CandleSharp.Application.SeriesAnalysis? _series;
