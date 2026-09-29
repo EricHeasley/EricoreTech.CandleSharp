@@ -21,15 +21,9 @@
                 <p class="gauge-take @(Verdict.Direction.ToString().ToLowerInvariant())">
                     @Icon(Verdict.Direction) @Verdict.Headline
                 </p>
-                <button type="button" class="gauge-toggle" @onclick="() => _expanded = !_expanded">
-                    @(_expanded ? "Hide details" : "Why?")
-                </button>
-                @if (_expanded)
-                {
-                    <ul class="verdict-details">
-                        @foreach (var d in Verdict.Details) { <li>@d</li> }
-                    </ul>
-                }
+                <ul class="verdict-details">
+                    @foreach (var d in Verdict.Details) { <li>@d</li> }
+                </ul>
             </div>
         </div>
     }
@@ -37,7 +31,6 @@
 
 @code {
     [Parameter] public Verdict? Verdict { get; set; }
-    private bool _expanded;
 
     // -100 (strong sell) .. 0 (neutral) .. +100 (strong buy)
     private double Score => Verdict is null ? 0 : Verdict.Direction switch
