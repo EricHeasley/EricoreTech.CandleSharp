@@ -47,6 +47,7 @@ namespace EricoreTech.CandleSharp.Domain
     public sealed record MLGuidanceReport(
         string Ticker,
         MLGuidanceOptions Options,
+        int EffectiveWarmup,
         IReadOnlyList<string> Excluded,
         int FeatureCount,
         DateTime AsOf,

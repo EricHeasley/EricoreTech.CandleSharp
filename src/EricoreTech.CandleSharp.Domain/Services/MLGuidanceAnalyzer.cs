@@ -29,9 +29,13 @@ namespace EricoreTech.CandleSharp.Domain
             excludeColumns ??= new HashSet<string>();
 
             int n = table.Count;
-            if (n <= o.Warmup + o.Horizon)
+            // A ticker with a bit over a year of daily bars is common and shouldn't hard-fail just because
+            // the requested warm-up (250 by default) leaves no room for a walk-forward checkpoint; shrink it
+            // to whatever the history actually supports instead, same as Backtester does for its own warmup.
+            int warmup = Math.Min(o.Warmup, n - o.Horizon - MinTrainingRows);
+            if (warmup < 30)
                 throw new InvalidOperationException(
-                    $"not enough history: need more than {o.Warmup + o.Horizon} bars (warmup + horizon), have {n}");
+                    $"not enough history: need at least {o.Horizon + MinTrainingRows + 30} bars (horizon + minimum training rows), have {n}");
 
             var (names, features, excluded) = BuildFeatures(table, excludeColumns);
             if (features.Length == 0)
@@ -54,7 +58,7 @@ namespace EricoreTech.CandleSharp.Domain
             double alignedReturnSum = 0, actualUpCount = 0, resolvedCount = 0;
             var calibration = new List<(double Predicted, double Actual)>();
 
-            for (int t = o.Warmup; t + o.Horizon < n; t += o.Step)
+            for (int t = warmup; t + o.Horizon < n; t += o.Step)
             {
                 var trainRows = RowsWithKnownLabel(label, t, o.Horizon);
                 if (trainRows.Length < MinTrainingRows) continue;
@@ -93,7 +97,7 @@ namespace EricoreTech.CandleSharp.Domain
             double baseline = resolvedCount > 0 ? Math.Max(actualUpCount, resolvedCount - actualUpCount) / resolvedCount : 0;
 
             return new MLGuidanceReport(
-                table.Ticker, o, excluded, features.Length > 0 ? features[0].Length : 0,
+                table.Ticker, o, warmup, excluded, features.Length > 0 ? features[0].Length : 0,
                 table.Timestamps[^1],
                 direction, Math.Abs(probability - 0.5) * 200, probability,
                 topFeatures,

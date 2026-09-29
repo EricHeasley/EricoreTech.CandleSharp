@@ -33,6 +33,10 @@
             {
                 @:Excluded (uses future bars): @string.Join(", ", r.Excluded).
             }
+            @if (r.EffectiveWarmup < r.Options.Warmup)
+            {
+                @:Warm-up reduced to @r.EffectiveWarmup bars (from @r.Options.Warmup) to fit this ticker's available history.
+            }
         </p>
 
         <h3>Walk-forward check</h3>

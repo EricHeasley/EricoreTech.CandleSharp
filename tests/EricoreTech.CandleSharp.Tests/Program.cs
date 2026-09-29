@@ -813,8 +813,17 @@ var mlGuideNoiseReport = MLGuidanceAnalyzer.Analyze(mlNoiseTable, mlOptions);
 Check(Math.Abs(mlGuideNoiseReport.HitRate - mlGuideNoiseReport.BaselineHitRate) < 0.15,
     $"pure noise should show no real edge over baseline, got hitRate={mlGuideNoiseReport.HitRate:P0} vs baseline={mlGuideNoiseReport.BaselineHitRate:P0}");
 
-Check(ThrowsOf<InvalidOperationException>(() => MLGuidanceAnalyzer.Analyze(mlTable, new MLGuidanceOptions(Warmup: plantedBars))),
-    "too little remaining history after warmup should be rejected");
+Check(mlGuideReport.EffectiveWarmup == mlOptions.Warmup, "requested warmup should be used as-is when there's enough history");
+
+var mlShortTable = new SnapshotTable(
+    "SHORT", planted.Timestamps.Take(40).ToList(), planted.Closes.Take(40).ToList(),
+    [("PHASE", mlPhase.Take(40).ToArray()), ("NOISE", mlNoiseCol.Take(40).ToArray())],
+    planted.Stances.ToDictionary(kv => kv.Key, kv => kv.Value.Take(40).ToArray()));
+Check(ThrowsOf<InvalidOperationException>(() => MLGuidanceAnalyzer.Analyze(mlShortTable)),
+    "too little history overall should be rejected");
+var mlClamped = MLGuidanceAnalyzer.Analyze(mlTable, new MLGuidanceOptions(Warmup: plantedBars, Horizon: 10, Step: 7, NumTrees: 15));
+Check(mlClamped.EffectiveWarmup < plantedBars && mlClamped.Checkpoints > 0,
+    $"a warmup that leaves no room for a checkpoint should shrink instead of failing, got effective={mlClamped.EffectiveWarmup}");
 Check(ThrowsOf<ArgumentOutOfRangeException>(() => new MLGuidanceOptions(NeutralBand: 0.6).Validate()),
     "neutral band must be under 0.5");
 

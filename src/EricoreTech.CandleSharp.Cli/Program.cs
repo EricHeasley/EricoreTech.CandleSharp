@@ -557,6 +557,8 @@ static int RunMLGuidance(List<string> rest, Dictionary<string, string> opts, MLG
     Console.WriteLine($"ML guidance for {r.Ticker} ({options.Horizon}-bar horizon), trained on {r.FeatureCount} features as of {r.AsOf:yyyy-MM-dd}");
     if (r.Excluded.Count > 0)
         Console.WriteLine($"Excluded (uses future bars): {string.Join(", ", r.Excluded)}");
+    if (r.EffectiveWarmup < r.Options.Warmup)
+        Console.WriteLine($"Warm-up reduced to {r.EffectiveWarmup} bars (from {r.Options.Warmup}) to fit this ticker's available history.");
     Console.WriteLine();
     Console.WriteLine($"{Icon(r.Direction)} {r.Direction}  probability of higher in {options.Horizon} bars: {r.Probability * 100:0.0}%  (confidence {r.Confidence:0}%)");
     Console.WriteLine();
