@@ -7,7 +7,7 @@
     <base href="/" />
     <title>CandleSharp</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='6' width='3' height='7' fill='%232a78d6'/%3E%3Crect x='7' y='3' width='3' height='10' fill='%230ca30c'/%3E%3Crect x='12' y='8' width='3' height='5' fill='%23eb6834'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="app.css?v=@CssVersion" />
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 
@@ -20,3 +20,12 @@
 </body>
 
 </html>
+
+@code {
+    // A stale browser cache serving an old app.css is indistinguishable from an
+    // actual styling bug, so key the URL to the file's own timestamp: any real
+    // edit forces every browser to fetch it fresh on the next page load,
+    // regardless of what its cache thinks "no-cache" means.
+    private static readonly string CssVersion = File.GetLastWriteTimeUtc(
+        Path.Combine(AppContext.BaseDirectory, "wwwroot", "app.css")).Ticks.ToString();
+}
