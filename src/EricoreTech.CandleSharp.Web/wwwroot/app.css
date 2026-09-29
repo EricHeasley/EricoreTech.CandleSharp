@@ -399,7 +399,7 @@ html, body { height: 100%; overflow-x: hidden; }
 .watch-row .wr-change.up { color: var(--up); }
 .watch-row .wr-change.down { color: var(--down); }
 .watch-row .wr-badge { font-size: 10px; font-weight: 700; color: var(--up); }
-.watch-row svg.spark { display: block; flex: 0 0 46px; height: 20px; }
+.watch-row svg.spark { display: block; width: 46px; height: 20px; flex: 0 0 46px; }
 @media (max-width: 860px) {
   /* Sidebar stacks above the main content instead of sharing the row with it. */
   .app-body { flex-direction: column; }
