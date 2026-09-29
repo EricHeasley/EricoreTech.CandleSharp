@@ -1,4 +1,4 @@
-namespace EricoreTech.CandleSharp.Blazor.Services
+namespace EricoreTech.CandleSharp.Web.Services
 {
     /// <summary>One sidebar entry: a saved dataset plus the at-a-glance numbers the watchlist shows.</summary>
     public sealed record WatchlistRow(

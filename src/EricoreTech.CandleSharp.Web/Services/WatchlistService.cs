@@ -1,6 +1,6 @@
 using EricoreTech.CandleSharp.Application;
 
-namespace EricoreTech.CandleSharp.Blazor.Services
+namespace EricoreTech.CandleSharp.Web.Services
 {
     /// <summary>
     /// Builds the sidebar watchlist: for every saved dataset, its last close and

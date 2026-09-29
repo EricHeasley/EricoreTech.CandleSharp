@@ -76,6 +76,7 @@ body {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
   padding: 14px 20px;
@@ -94,6 +95,9 @@ main { max-width: 1060px; margin: 0 auto; padding: 16px 20px 48px; }
   margin-bottom: 16px;
 }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.field input, .field select, select, input {
+  max-width: 100%;
+}
 .field input, .field select {
   background: var(--surface);
   color: var(--ink);
@@ -356,3 +360,158 @@ details[open] summary { margin-bottom: 8px; }
 .marker-bearish { fill: var(--down); }
 .rsi-line { stroke: var(--s1); stroke-width: 2; fill: none; }
 .rsi-guide { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 4 3; }
+
+/* ============================================================
+   Blazor dashboard shell: topbar + sidebar watchlist + tabbed main area
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { height: 100%; overflow-x: hidden; }
+#app-root { display: flex; flex-direction: column; min-height: 100vh; }
+
+.app-body { display: flex; flex: 1; min-height: 0; align-items: flex-start; }
+.app-body main.main { flex: 1; min-width: 0; max-width: 1100px; margin: 0 auto; padding: 16px 20px 60px; width: 100%; }
+
+/* ---------- sidebar / watchlist ---------- */
+.sidebar {
+  width: 250px; flex: 0 0 250px;
+  border-right: 1px solid var(--grid);
+  min-height: calc(100vh - 53px);
+  padding: 12px 10px 30px;
+  position: sticky; top: 53px; align-self: flex-start;
+}
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 8px; }
+.sidebar-head h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.watchlist-empty { color: var(--muted); font-size: 12px; padding: 8px 6px; }
+.watch-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left; background: none; border: 0; border-radius: 8px;
+  padding: 8px 6px; cursor: pointer; color: var(--ink);
+}
+.watch-row:hover { background: var(--grid); }
+.watch-row.selected { background: var(--bb-fill); border: 1px solid var(--accent); padding: 7px 5px; }
+.watch-row .fire-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: var(--grid);
+}
+.watch-row.firing .fire-dot { background: var(--up); box-shadow: 0 0 0 3px var(--bb-fill); }
+.watch-row .wr-main { flex: 1; min-width: 0; }
+.watch-row .wr-top { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; font-weight: 600; }
+.watch-row .wr-bottom { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--muted); }
+.watch-row .wr-change.up { color: var(--up); }
+.watch-row .wr-change.down { color: var(--down); }
+.watch-row .wr-badge { font-size: 10px; font-weight: 700; color: var(--up); }
+.watch-row svg.spark { display: block; width: 46px; height: 20px; flex: 0 0 46px; }
+@media (max-width: 860px) {
+  /* Sidebar stacks above the main content instead of sharing the row with it. */
+  .app-body { flex-direction: column; }
+  .sidebar { position: static; width: 100%; flex: none; min-height: 0; border-right: 0; border-bottom: 1px solid var(--grid); }
+  .watchlist-rows { display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+  .watch-row { flex: 0 0 190px; flex-direction: column; align-items: stretch; }
+}
+
+/* ---------- ticker header ---------- */
+.ticker-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin: 4px 0 14px; }
+.ticker-header .th-ticker { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; }
+.ticker-header .th-price { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ticker-header .th-change { font-size: 15px; font-weight: 700; }
+.ticker-header .th-change.up { color: var(--up); }
+.ticker-header .th-change.down { color: var(--down); }
+.ticker-header .th-badges { display: flex; gap: 6px; margin-left: auto; }
+.th-badge {
+  font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--grid); color: var(--muted);
+}
+.th-badge.buy { background: var(--up); border-color: var(--up); color: #fff; }
+.th-badge.sell { background: var(--down); border-color: var(--down); color: #fff; }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--grid); margin-bottom: 14px; overflow-x: auto; }
+.tabs button {
+  border: 0; border-radius: 0; background: none; padding: 9px 14px; font: inherit; font-weight: 600;
+  color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.tabs button:hover { color: var(--ink); background: var(--grid); }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs button .tab-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--up); margin-left: 5px; vertical-align: middle; }
+
+/* ---------- gauge ---------- */
+.gauge-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.gauge-wrap svg { width: 160px; height: 90px; flex: none; }
+.gauge-details { flex: 1; min-width: 240px; }
+.gauge-take { font-size: 15px; margin: 2px 0 8px; color: var(--ink-2); }
+
+/* ---------- interactive chart ---------- */
+.chart-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.chart-toolbar .spacer { flex: 1; }
+.zoom-btn { padding: 3px 9px; font-size: 13px; }
+.chart-hint { font-size: 11px; color: var(--muted); }
+.marker-select { font-size: 12px; padding: 4px 6px; max-width: 100%; }
+.marker-select select { max-width: 220px; }
+svg.interactive-chart { cursor: crosshair; touch-action: none; }
+.chart-highlight { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.marker-good { fill: var(--up); stroke: var(--up); }
+.marker-bad { fill: var(--down); stroke: var(--down); }
+.marker-pending { fill: var(--muted); stroke: var(--muted); }
+
+/* ---------- live rule preview ---------- */
+.live-preview {
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 6px 0 10px;
+  font-size: 13px;
+  background: var(--bb-fill);
+}
+.live-preview.empty { color: var(--muted); border-style: dashed; }
+.live-preview b.good { color: var(--up); }
+.live-preview b.bad { color: var(--down); }
+
+/* ---------- tag / helper ---------- */
+.jargon { border-bottom: 1px dotted var(--muted); cursor: help; }
+.signal-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-toggle { font-size: 12px; padding: 3px 9px; }
+
+.watch-loading, .tab-loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
+
+.gauge-band { fill: none; stroke-width: 14; stroke-linecap: butt; opacity: 0.85; }
+.gauge-band.sell { stroke: var(--down); }
+.gauge-band.neutral { stroke: var(--grid); }
+.gauge-band.buy { stroke: var(--up); }
+.gauge-take.bullish { color: var(--up); }
+.gauge-take.bearish { color: var(--down); }
+.gauge-take.neutral { color: var(--ink-2); }
+
+.triggers-mini { margin-top: 10px; }
+tr.clickable-row { cursor: pointer; }
+tr.clickable-row:hover { background: var(--grid); }
+tr.row-selected { background: var(--bb-fill); }
+
+/* Blazor's built-in reconnect/unhandled-error banner (only shown by blazor.web.js itself). */
+#blazor-error-ui {
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+    color: #000;
+}
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}
+
+/* ML guidance */
+.ml-headline { font-size: 17px; font-weight: 700; margin: 4px 0 8px; }
+.ml-headline.bullish { color: var(--up); }
+.ml-headline.bearish { color: var(--down); }
+.ml-headline.neutral { color: var(--ink-2); }
+.feature-bars { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.feature-bar-row { display: grid; grid-template-columns: 160px 1fr 42px; align-items: center; gap: 8px; font-size: 12px; }
+.feature-name { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feature-bar-track { background: var(--grid); border-radius: 999px; height: 8px; overflow: hidden; }
+.feature-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.feature-pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }

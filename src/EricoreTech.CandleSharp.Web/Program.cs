@@ -2,6 +2,8 @@ using EricoreTech.CandleSharp.Application;
 using EricoreTech.CandleSharp.Domain;
 using EricoreTech.CandleSharp.Infrastructure;
 using EricoreTech.CandleSharp.Web;
+using EricoreTech.CandleSharp.Web.Components;
+using EricoreTech.CandleSharp.Web.Services;
 
 // Web root rides with the binary so the server can be launched from any
 // working directory (data/ and plugins/ stay cwd-relative on purpose).
@@ -36,6 +38,14 @@ builder.Services.AddSingleton<WatchService>();
 builder.Services.AddSingleton<PatternService>();
 builder.Services.AddSingleton<RuleService>();
 builder.Services.AddSingleton<MLGuidanceService>();
+builder.Services.AddSingleton<WatchlistService>();
+
+// The one piece of state shared across a browser tab's circuit: which ticker the
+// interactive dashboard (served alongside the JSON API below) has selected.
+builder.Services.AddScoped<DashboardState>();
+
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
 
 var app = builder.Build();
 
@@ -49,13 +59,24 @@ if (catalog.Indicators.Count == 0)
         "No indicator plugin DLLs found (scanned: {Scanned}) — build the solution first, or pass --plugins <dir>",
         string.Join(", ", catalog.ScannedDirectories.Select(Path.GetFullPath)));
 
-app.UseDefaultFiles();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+    app.UseHsts();
+}
+
 // Revalidate the dashboard's files on every load so a rebuilt UI shows up
 // without a hard refresh.
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
 });
+app.UseAntiforgery();
+
+// The interactive dashboard (watchlist, chart, rules, patterns, ML guidance) lives
+// at "/"; everything below is the JSON API and printable report for scripting.
+app.MapRazorComponents<App>()
+    .AddInteractiveServerRenderMode();
 
 app.MapGet("/api/indicators", (IPluginCatalog plugins) =>
     plugins.Indicators.Select(r => new { name = r.Indicator.Name, source = r.Source }));
